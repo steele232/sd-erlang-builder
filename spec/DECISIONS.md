@@ -154,6 +154,18 @@ defects (Q1/Q2) came from applying it across *all* groups, and requirement
 R-NS-2 forbids exactly that. Not yet modelled: healing (re-sync after the link
 comes back), and hidden nodes. Model those before writing code.
 
+**Status (2026-10-17): user leans strongly toward per-s_group logical
+scoping. Provisional, not yet recorded in `spec/deviations.yml`.** Recovery
+needs three parts:
+- re-dial;
+- the per-group merge (R-NS-1);
+- link incarnations against stale reports (`SGroupPOPHeal.tla`: plain
+  logical fails even at one failure; with incarnations, both invariants hold
+  at one failure on both topologies).
+
+Who re-dials (kernel, or a library via libcluster's connect/list_nodes
+hooks, with no fork needed) is analysed in `spec/proposals/D5-reconnect.md`.
+
 ## D-6. Can `global_group` and s_groups coexist on one node?
 
 **Question.** 19.3 *replaced* `global_group` with `s_group` in the kernel

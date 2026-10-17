@@ -26,7 +26,13 @@ CONSTANTS Policy, MaxFail, Topo
 
 Nodes == 1..5
 GroupIds == {"g1", "g2", "g3"}
-GM == IF Topo = "chain"
+\* "small": two groups overlapping in two nodes; node 5 is idle (keeps the
+\*          2-failure state space checkable).
+GM == IF Topo = "small"
+      THEN [g \in GroupIds |-> CASE g = "g1" -> {1, 2, 3}
+                                 [] g = "g2" -> {2, 3, 4}
+                                 [] g = "g3" -> {5}]
+      ELSE IF Topo = "chain"
       THEN [g \in GroupIds |-> CASE g = "g1" -> {1, 2, 3}
                                  [] g = "g2" -> {2, 3, 4}
                                  [] g = "g3" -> {3, 4, 5}]
