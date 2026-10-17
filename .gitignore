@@ -10,3 +10,5 @@ erl_crash.dump
 /test-results/
 /vendor/proper/
 /vendor/proper-1.5/
+
+convo_transcripts/
