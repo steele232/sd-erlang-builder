@@ -10,7 +10,8 @@
 %%                   G == M's namespace of G  (replication on all members)
 %%   C3 connections  M's connections of N  ⊆  nodes(connected) on N
 %%                   (I may hold extra links: O2/O4 in spec/deviations.yml)
-%%   C4 visibility   (opt-in, SD_PBT_VISIBILITY=1; P1 + S2) every VISIBLE link
+%%   C4 visibility   (default on; SD_PBT_VISIBILITY=0 disables; P1 + S2;
+%%                   clean on 19.3 and fixed6, 2026-10-17) every VISIBLE link
 %%                   on N (nodes() on N) joins two nodes that share a group in
 %%                   M, or two free nodes, or is a connection M itself holds
 %%                   (links kept by remove_nodes/2, O1 must_match). C3 counts
@@ -91,7 +92,7 @@ node_diff(N, Model, #{groups := IGroups, names := INames, conns := IConns} = Obs
      || is_list(IGroups), MGroups =:= IGroups, MNames =/= INames] ++
     [{N, c3_connections_missing, MConns -- IConns} || (MConns -- IConns) =/= []] ++
     [{N, c4_visible_outside_group, Bad}
-     || os:getenv("SD_PBT_VISIBILITY") =:= "1",
+     || os:getenv("SD_PBT_VISIBILITY", "1") =/= "0",
         Bad <- [[M || M <- maps:get(vis, Obs, []),
                       not lists:member(M, MConns), not visible_ok(N, M, Model)]],
         Bad =/= []].

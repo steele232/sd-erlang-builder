@@ -104,7 +104,7 @@ remove_nodes(G, Nodes0) ->
 
 delete_s_group(G) ->
     case maps:find(G, groups()) of
-        error -> {error, {"node_does_not_belong_to_s_group", G}};
+        error -> {error, {"remote_s_group", G}};                       % 19.3 (found by L2)
         {ok, Members} ->
             _ = multicall(Members, i_drop, [G]),
             ok
@@ -149,7 +149,7 @@ unregister_name(G, Name) ->
     with_members(G, {no, cannot_unregister_from_remote_group},       % R2
                  fun(Members) ->
                          locked(G, Members,
-                                fun() -> _ = multicall(Members, i_delete, [G, Name, any]), true end)
+                                fun() -> _ = multicall(Members, i_delete, [G, Name, any]), ok end)   % 19.3 returns ok (found by L2)
                  end).
 
 whereis_name(G, Name) ->
@@ -193,7 +193,13 @@ registered_names({node, N}) ->
 own_s_groups() -> lists:sort(maps:to_list(groups())).
 own_nodes() -> lists:usort([node() | lists:append(maps:values(groups()))]).
 own_nodes(G) -> maps:get(G, groups(), []).
-s_groups() -> {lists:sort(maps:keys(groups())), []}.
+%% 19.3 answers undefined while it has no group state (no_conf), including
+%% after leaving its last group (L2: never {[], []} in the golden traces).
+s_groups() ->
+    case groups() of
+        Gs when map_size(Gs) =:= 0 -> undefined;
+        Gs -> {lists:sort(maps:keys(Gs)), []}
+    end.
 sync() -> ok.
 info() -> [{state, synced}, {own_s_groups, own_s_groups()}].
 

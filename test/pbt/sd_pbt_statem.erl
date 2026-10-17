@@ -130,8 +130,11 @@ value_ok(F, _Args, _M, Expected, Res) when F =:= remove_nodes; F =:= delete_s_gr
     norm_ok(Res) =:= Expected;
 value_ok(F, _Args, _M, Expected, Res) when F =:= register_name; F =:= re_register_name ->
     norm_yes(Res) =:= Expected;
-value_ok(unregister_name, _Args, _M, true, _Res) ->
-    true;                                                     %% R2
+value_ok(unregister_name, _Args, _M, true, Res) ->
+    %% R2: M always says true; 19.3 returns ok, or this error on a
+    %% non-member. Any other shape breaks R-API-1 (L2 found a port returning
+    %% true).
+    Res =:= ok orelse Res =:= {no, cannot_unregister_from_remote_group};
 value_ok(F, [G, N, Ni], M, Expected, Res) when F =:= whereis_name; F =:= send ->
     Got = norm_lookup(Res),                                   %% R1 for send/3
     case sd_model:is_s_group_s_node(Ni, G, M) of

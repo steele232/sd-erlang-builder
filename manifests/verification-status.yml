@@ -57,3 +57,11 @@ port_prototype_otp29:
   l5: connect_all false 1/20; connect_all true 19/20 (UD2 only, pid-blind equal); control without s_group 20/20
   c4_baseline_19.3_fixed6: clean (19 pass + 1 not_quiescent of 20)
   regression_cases: [test/corpus/l1-sdx-freemesh.eterm, test/corpus/l1-c4-joinrace.eterm]
+  l2_vs_19.3_outcome_sets: >-
+    core keys (own_s_groups, s_groups, names) 30/30 after fixes found by L2
+    (s_groups/0 undefined when groupless, delete_s_group remote_s_group error,
+    unregister_name ok); was 3/30. All keys 22/30: the remaining 8 diverge
+    only in hidden/visible link keys (O2, needs the kernel hook).
+    Triage: test/pbt/sd_l2_why.escript
+  l1_tightened: unregister_name must return ok or {no, cannot_unregister_from_remote_group}; C4 default on (clean on 19.3 19/20 + 1 known, fixed6 20/20)
+
