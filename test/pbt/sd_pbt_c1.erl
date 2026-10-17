@@ -4,7 +4,44 @@
 %% driver a global peer (no delete_s_group, so no connect_free_nodes; H2).
 -module(sd_pbt_c1).
 
--export([run/1]).
+-include("sd_compat.hrl").
+
+-export([run/1, bridge/1]).
+
+%% H2 bridge construction (hypothesised C1 trigger):
+%%  1. free n3,n4 via create+delete -> they sync with the hidden driver
+%%  2. n3 joins g1 (driver still lists n3 in its free partition)
+%%  3. free n6,n7 via create+delete -> they sync with the driver, learn n3
+%%     through it, and attempt a free-format sync with s_group member n3
+bridge(Trials) ->
+    R = [bridge_trial() || _ <- lists:seq(1, Trials)],
+    io:format("C1 bridge: ~p/~p trials crashed a global_name_server~n",
+              [length([x || {crashed, _} <- R]), Trials]),
+    [io:format("    ~p~n", [X]) || X <- lists:usort([D || {crashed, D} <- R])],
+    ok.
+
+bridge_trial() ->
+    _ = ?CATCH(ets:new(sd_pbt, [named_table, public, set])),
+    ok = sd_pbt_cluster:reset(),
+    N = fun(X) -> list_to_atom(X ++ "@pbt.sd.lab") end,
+    All = [N(X) || X <- ["n3", "n4", "n5", "n6", "n7"]],
+    Before = [{Nd, rpc:call(Nd, erlang, whereis, [global_name_server])} || Nd <- All],
+    {ok, g0, _} = rpc:call(N("n3"), s_group, new_s_group, [g0, [N("n3"), N("n4")]]),
+    timer:sleep(1500),
+    ok = rpc:call(N("n3"), s_group, delete_s_group, [g0]),
+    timer:sleep(3000),
+    {ok, g1, _} = rpc:call(N("n3"), s_group, new_s_group, [g1, [N("n3"), N("n5")]]),
+    timer:sleep(2000),
+    {ok, g9, _} = rpc:call(N("n6"), s_group, new_s_group, [g9, [N("n6"), N("n7")]]),
+    timer:sleep(1500),
+    ok = rpc:call(N("n6"), s_group, delete_s_group, [g9]),
+    timer:sleep(6000),
+    After = [{Nd, rpc:call(Nd, erlang, whereis, [global_name_server])} || Nd <- All],
+    Changed = [Nd || {Nd, P} <- Before, lists:keyfind(Nd, 1, After) =/= {Nd, P}],
+    case Changed of
+        [] -> {ok, #{driver_known => ?CATCH(global:get_known())}};
+        _ -> {crashed, #{gns_restarted_or_down => Changed}}
+    end.
 
 run(Trials) ->
     Variants = [{group_node_pings_free_pair, fun group_pings_free_pair/1, plain},
@@ -26,7 +63,7 @@ run(Trials) ->
 %%              syncs them with every connected node, the hidden driver
 %%              included (deviation H2).
 trial(F, How) ->
-    catch ets:new(sd_pbt, [named_table, public, set]),
+    _ = ?CATCH(ets:new(sd_pbt, [named_table, public, set])),
     ok = sd_pbt_cluster:reset(),
     N = fun(X) -> list_to_atom(X ++ "@pbt.sd.lab") end,
     {ok, g1, _} = rpc:call(N("n1"), s_group, new_s_group, [g1, [N("n1"), N("n2"), N("h1")]]),

@@ -12,6 +12,8 @@
 %%   sd_free_equiv:compare(CorpusFile, TraceFileA, TraceFileB)   (pure, no cluster)
 -module(sd_free_equiv).
 
+-include("sd_compat.hrl").
+
 -export([sample_corpus/3, record/2, compare/3]).
 
 -define(TAB, sd_pbt).
@@ -71,7 +73,7 @@ first_diff(A, B) ->
         || {K, SA, SB} <- lists:zip3(lists:seq(1, length(A)), A, B), SA =/= SB]).
 
 run_sequence(Cmds) ->
-    catch ets:new(?TAB, [named_table, public, set]),
+    _ = ?CATCH(ets:new(?TAB, [named_table, public, set])),
     ok = sd_pbt_cluster:reset(),
     Maps = sd_pbt_cluster:pid_maps(),
     ets:insert(?TAB, {pid_maps, Maps}),
@@ -84,7 +86,7 @@ exec({re_register_name, N, P, Ni}, M) -> rpc:call(Ni, global, re_register_name, 
 exec({unregister_name, N, Ni}, _) -> rpc:call(Ni, global, unregister_name, [N]);
 exec({whereis_name, N, Ni}, _) -> rpc:call(Ni, global, whereis_name, [N]);
 exec({send, N, Ni}, _) -> rpc:call(Ni, erlang, apply,
-                                   [fun() -> catch global:send(N, sd_free_msg) end, []]).
+                                   [fun() -> ?CATCH(global:send(N, sd_free_msg)) end, []]).
 
 settle(Maps) ->
     Deadline = erlang:monotonic_time(millisecond) + ?SETTLE_CAP_MS,

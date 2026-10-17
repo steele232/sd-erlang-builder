@@ -216,7 +216,7 @@ control() ->
        {"stock global turns the same seeds into a full mesh",
         fun() ->
                 Nodes = nodes_of(T),
-                Full = lists:usort([link(A, B) || A <- Nodes, B <- Nodes, A < B]),
+                Full = lists:usort([edge(A, B) || A <- Nodes, B <- Nodes, A < B]),
                 await("visible links == full mesh",
                       fun() -> visible_links(T) =:= Full end, 30000),
                 {ok, [{visible_links, length(Full)},
@@ -233,10 +233,10 @@ topology() ->
     Groups = [{G, lists:sort(Ns)} || {G, normal, Ns} <- proplists:get_value(s_groups, Kernel)],
     PerNode = proplists:get_value(topology, proplists:get_value(sd_demo, Config)),
     Nodes = [N || {N, _} <- PerNode],
-    Allowed = lists:usort([link(A, B) || {_, Ns} <- Groups, A <- Ns, B <- Ns, A < B]),
-    Seeded = lists:usort([link(N, S) || {N, Spec} <- PerNode,
+    Allowed = lists:usort([edge(A, B) || {_, Ns} <- Groups, A <- Ns, B <- Ns, A < B]),
+    Seeded = lists:usort([edge(N, S) || {N, Spec} <- PerNode,
                                         S <- proplists:get_value(seeds, Spec, []),
-                                        lists:member(link(N, S), Allowed)]),
+                                        lists:member(edge(N, S), Allowed)]),
     #{groups => Groups, nodes => Nodes, allowed => Allowed, seeded => Seeded}.
 
 nodes_of(#{nodes := Nodes}) -> Nodes.
@@ -244,14 +244,14 @@ nodes_of(#{nodes := Nodes}) -> Nodes.
 expected_groups(Node, #{groups := Groups}) ->
     lists:sort([{G, Ns} || {G, Ns} <- Groups, lists:member(Node, Ns)]).
 
-link(A, B) when A < B -> {A, B};
-link(A, B) -> {B, A}.
+edge(A, B) when A < B -> {A, B};
+edge(A, B) -> {B, A}.
 
 visible_links(T) -> links(T, visible).
 hidden_links(T) -> links(T, hidden).
 
 links(#{nodes := Nodes}, Kind) ->
-    lists:usort([link(A, B) || A <- Nodes,
+    lists:usort([edge(A, B) || A <- Nodes,
                                B <- case rpc:call(A, erlang, nodes, [Kind]) of
                                         L when is_list(L) -> L;
                                         _ -> []

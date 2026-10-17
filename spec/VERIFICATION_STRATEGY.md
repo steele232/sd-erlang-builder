@@ -146,8 +146,11 @@ Lessons from applying this to two experimental fixes (`patches/experimental/`):
   borderline p.
 - **Judge every fix twice.** The targeted repro must improve, and the profile
   must not regress. Fix 0001 passed the first test (O5 0/25 vs 13/50,
-  p = 0.003) and failed the second (6/10 vs 3/20, p = 0.018). Fix 0002 passed
-  both.
+  p = 0.003). Its first L4 "regression" (6/10 vs 3/20) was withdrawn once later
+  reference campaigns showed 5/10 and 6/9 under newer harness versions.
+- **Only interleaved A/B counts.** `bin/sd-pbt-ab` alternates single runs on
+  reference and candidate with one harness version, so drift, load and harness
+  changes affect both arms equally.
 
 ## L5 — Free-node equivalence with stock OTP
 

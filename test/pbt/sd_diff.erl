@@ -15,6 +15,8 @@
 %%   sd_diff:compare(CorpusFile, GoldenFile)   run corpus, diff against golden
 -module(sd_diff).
 
+-include("sd_compat.hrl").
+
 -export([sample_corpus/3, record/2, compare/2, run_sequence/1, observe/0,
          final_states/3]).
 
@@ -109,7 +111,7 @@ final_states(CorpusFile, I, K) ->
 %%--------------------------------------------------------------------
 
 run_sequence(Cmds) ->
-    catch ets:new(?TAB, [named_table, public, set]),
+    _ = ?CATCH(ets:new(?TAB, [named_table, public, set])),
     ok = sd_pbt_cluster:reset(),
     ets:insert(?TAB, {pid_maps, sd_pbt_cluster:pid_maps()}),
     [begin

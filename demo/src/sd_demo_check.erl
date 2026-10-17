@@ -65,7 +65,7 @@ await(Desc, Fun, TimeoutMs) ->
     await_loop(lists:flatten(Desc), Fun, Deadline).
 
 await_loop(Desc, Fun, Deadline) ->
-    case catch Fun() of
+    case ?CATCH(Fun()) of
         true -> true;
         {true, V} -> V;
         Last ->

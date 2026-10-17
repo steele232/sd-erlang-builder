@@ -1,0 +1,7 @@
+# Modern reference images, pinned by digest (Bob-style: tags may move, digests don't).
+# Resolved 2026-10-17 from the docker.io/library/erlang:29.1.2 manifest list.
+stock_otp_29_1_2:
+  tag: docker.io/library/erlang:29.1.2
+  amd64: sha256:5fd7a924133b13033a8c8c2dfeff9093d8c66a2e7bbbd2796316fa396e4451e4
+  arm64: sha256:82674fd7d03b14d191dff3fd8ddefdfd5e8faddd00a877118c5d61bc7201719b
+  role: L5 free-node equivalence reference for an OTP 29.1.2 port; harness portability checks

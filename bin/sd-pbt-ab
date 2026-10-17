@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Interleaved A/B failure-profile comparison (VERIFICATION_STRATEGY L4).
+# Alternates single campaign runs on two runtimes with the SAME harness build,
+# so drift, machine load and harness changes affect both arms equally.
+#
+#   bin/sd-pbt-ab RUNTIME_A RUNTIME_B ROUNDS [N_CASES]
+#
+# Prints both profiles and a one-sided Fisher exact p for every failure kind
+# (H1: B fails more often than A). Logs: test-results/ab-<stamp>/
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+A="${1:?RUNTIME_A}"; B="${2:?RUNTIME_B}"; ROUNDS="${3:?ROUNDS}"; N="${4:-50}"
+OUT="$ROOT/test-results/ab-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
+# Build each arm's harness ONCE from the current source and pin it by ID:
+# later edits to the working tree cannot change the harness mid-experiment.
+harness_for() {
+  local rid; rid="$(podman image inspect "$1" --format '{{.Id}}')"
+  podman build --quiet --build-arg RUNTIME_IMAGE="$rid" \
+    -f "$ROOT/containers/pbt/Containerfile" "$ROOT"
+}
+HA="$(harness_for "$A")"; HB="$(harness_for "$B")"
+printf 'A=%s harness=%s\nB=%s harness=%s\nsource=%s\n' "$A" "$HA" "$B" "$HB" \
+  "$(git -C "$ROOT" rev-parse HEAD)$(git -C "$ROOT" diff --quiet || echo -dirty)" | tee "$OUT/arms.txt"
+for i in $(seq 1 "$ROUNDS"); do
+  for arm in A B; do
+    rt=$A; h=$HA; [ "$arm" = B ] && { rt=$B; h=$HB; }
+    SD_PBT_HARNESS_ID="$h" "$ROOT/bin/sd-pbt" campaign 1 "$N" "$rt" > "$OUT/$arm-$i.log" 2>&1 || true
+    k="$(grep -E '^run 1/1:' "$OUT/$arm-$i.log" | sed -E 's/^run 1\/1: //; s/ \(pbt-.*//')"
+    echo "$arm	${k:-harness_failure}" | tee -a "$OUT/outcomes.tsv"
+  done
+done
+python3 - "$OUT/outcomes.tsv" "$ROUNDS" <<'PY'
+import sys
+from math import comb
+rows=[l.rstrip("\n").split("\t") for l in open(sys.argv[1]) if l.strip()]
+n=int(sys.argv[2])
+kinds=sorted({k for _,k in rows})
+def p_ge(a,b,n1,n2):
+    K=a+b;N=n1+n2
+    return sum(comb(n1,x)*comb(n2,K-x) for x in range(a,min(K,n1)+1))/comb(N,K) if K else 1.0
+print(f"\n{'kind':60s} {'A':>4s} {'B':>4s}  p(B worse)")
+for k in kinds:
+    a=sum(1 for arm,kk in rows if arm=="A" and kk==k); b=sum(1 for arm,kk in rows if arm=="B" and kk==k)
+    print(f"{k:60s} {a:>4d} {b:>4d}  {p_ge(b,a,n,n):.3f}" if k!="pass" else f"{k:60s} {a:>4d} {b:>4d}")
+PY

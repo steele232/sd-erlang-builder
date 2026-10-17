@@ -36,8 +36,14 @@ RUNTIME="${2:-localhost/sd-erlang:19.3-reference}"
 
 RUNTIME_ID="$(podman image inspect "$RUNTIME" --format '{{.Id}}')"
 TAG="localhost/sd-pbt:${RUNTIME##*:}"
-podman build --quiet --build-arg RUNTIME_IMAGE="$RUNTIME_ID" \
-  -f "$ROOT/containers/pbt/Containerfile" -t "$TAG" "$ROOT" >/dev/null
+# SD_PBT_HARNESS_ID pins an already-built harness image (bin/sd-pbt-ab uses it
+# so that both arms of an A/B run the exact same harness build).
+if [ -n "${SD_PBT_HARNESS_ID:-}" ]; then
+  TAG="$SD_PBT_HARNESS_ID"
+else
+  podman build --quiet --build-arg RUNTIME_IMAGE="$RUNTIME_ID" \
+    -f "$ROOT/containers/pbt/Containerfile" -t "$TAG" "$ROOT" >/dev/null
+fi
 echo "harness $TAG on runtime $RUNTIME ($RUNTIME_ID)"
 
 mkdir -p "$OUT"

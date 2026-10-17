@@ -7,6 +7,8 @@
 %% Distinguishes R3-style slow convergence from permanent divergence.
 -module(sd_pbt_o5).
 
+-include("sd_compat.hrl").
+
 -export([run/2, trace_failure/1]).
 
 %% Hypothesis under test (spec/deviations.yml O5/O6): global's own-group
@@ -18,7 +20,7 @@
 -define(TAB, sd_pbt).
 
 run(Trials, CapMs) ->
-    catch ets:new(?TAB, [named_table, public, set]),
+    _ = ?CATCH(ets:new(?TAB, [named_table, public, set])),
     Results = [trial(I, CapMs) || I <- lists:seq(1, Trials)],
     Lat = [Ms || {converged, Ms, _, _} <- Results],
     Never = length([x || {never, _, _, _} <- Results]),
@@ -88,7 +90,7 @@ trace_failure(Tries) when Tries =< 0 ->
     io:format("no failing trial captured~n"),
     ok;
 trace_failure(Tries) ->
-    catch ets:new(?TAB, [named_table, public, set]),
+    _ = ?CATCH(ets:new(?TAB, [named_table, public, set])),
     ok = sd_pbt_cluster:reset(),
     Maps = sd_pbt_cluster:pid_maps(),
     ets:insert(?TAB, {pid_maps, Maps}),

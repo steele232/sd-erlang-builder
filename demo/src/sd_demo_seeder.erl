@@ -3,6 +3,8 @@
 %% Re-pinging heals links after a seed restarts. On stock OTP (no s_group)
 %% every seed is pinged.
 -module(sd_demo_seeder).
+
+-include("sd_compat.hrl").
 -behaviour(gen_server).
 
 -export([start_link/1]).
@@ -38,7 +40,7 @@ code_change(_OldVsn, Seeds, _Extra) ->
     {ok, Seeds}.
 
 permitted(Seeds) ->
-    case catch s_group:own_nodes() of
+    case ?CATCH(s_group:own_nodes()) of
         Own when is_list(Own) -> [S || S <- Seeds, lists:member(S, Own)];
         _ -> Seeds
     end.

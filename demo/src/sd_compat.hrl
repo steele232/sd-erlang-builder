@@ -6,3 +6,6 @@
 -define(EXCEPTION(Class, Reason, _Stack), Class:Reason).
 -define(GET_STACK(_Stack), erlang:get_stacktrace()).
 -endif.
+
+%% `catch Expr` is deprecated in OTP 29; try/catch works on OTP 20 and 29.
+-define(CATCH(Expr), (try Expr catch _:_ -> {'EXIT', caught} end)).

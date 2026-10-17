@@ -110,9 +110,12 @@
     (one function), image localhost/sd-erlang:19.3-exp-merge-fix (never an oracle).
     sd_pbt_o5:run(25, 30000): reference 13/50 never converge (6/25 + 7/25);
     patched 0/25 never (max 432 ms). One-sided Fisher exact p ~ 0.006.
-    BUT the L4 regression gate REJECTS this one-function fix: campaign 10x50 on the
-    patched image gives {not_quiescent,new_s_group} in 6/10 runs vs 3/20 on the
-    pooled reference (two campaigns), one-sided Fisher p = 0.018. Some members never complete any group sync (e.g. n1,n5,n9
+    L4 regression gate: campaign 10x50 on the patched image gave
+    {not_quiescent,new_s_group} in 6/10 runs vs 3/20 on the pooled reference
+    (p = 0.018). VERDICT WITHDRAWN: later reference campaigns under newer harness
+    versions gave 5/10 and 6/9 for the same kind (censoring and drift; see
+    VERIFICATION_STRATEGY L4), so the comparison was not like-for-like. To be
+    settled by the interleaved A/B campaign (bin/sd-pbt-ab). Some members never complete any group sync (e.g. n1,n5,n9
     isolated in g2). Retargeting the broadcast without stock's full merge protocol
     (symmetric partition broadcasts and lock cancellation for the peer's nodes)
     abandons in-flight syncs. Lesson for the port: implement the stock merge

@@ -5,12 +5,14 @@
 %%   sd_crash_hunt:run(CorpusFile, Rounds)
 -module(sd_crash_hunt).
 
+-include("sd_compat.hrl").
+
 -export([run/2]).
 
 -define(TAB, sd_pbt).
 
 run(CorpusFile, Rounds) ->
-    catch ets:new(?TAB, [named_table, public, set]),
+    _ = ?CATCH(ets:new(?TAB, [named_table, public, set])),
     {ok, [#{sequences := Seqs}]} = file:consult(CorpusFile),
     Hits = lists:append([hunt(R, I, S) || R <- lists:seq(1, Rounds),
                                           {I, S} <- lists:zip(lists:seq(1, length(Seqs)), Seqs)]),

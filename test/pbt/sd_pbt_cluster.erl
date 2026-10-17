@@ -3,6 +3,8 @@
 %% nodes, all free (no s_groups config) at start.
 -module(sd_pbt_cluster).
 
+-include("sd_compat.hrl").
+
 -export([sut_nodes/0, node_types/0, start/0, reset/0, stop/0,
          pid_maps/0, to_real/2, to_ref/2]).
 
@@ -86,7 +88,7 @@ wait_until(Fun, TimeoutMs, What) ->
     wait_loop(Fun, Deadline, What).
 
 wait_loop(Fun, Deadline, What) ->
-    case catch Fun() of
+    case ?CATCH(Fun()) of
         true -> ok;
         _ ->
             case erlang:monotonic_time(millisecond) > Deadline of
