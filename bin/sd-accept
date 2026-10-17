@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Port acceptance: run every automated verification layer against a runtime
+# image and write one verdict file (spec/VERIFICATION_STRATEGY.md, "What
+# 'correct port' means").
+#
+#   bin/sd-accept RUNTIME_TAG [REFERENCE_TAG]
+#
+#   RUNTIME_TAG    candidate, e.g. localhost/sd-erlang:29.1.2-sd-candidate
+#   REFERENCE_TAG  default localhost/sd-erlang:19.3-reference
+#
+# Layers: L0 model self-tests, L6 TLC, L1 PropEr (quiescent), L4 campaign
+# profile, L2 differential vs reference golden traces, deterministic defect
+# repros (Q2, O5). L3 scenarios and L5 free-node equivalence are run
+# separately (bin/sd-demo*, sd_free_equiv) because they need their own
+# runtime pairs. The verdict lists results; judging "no worse than the
+# reference" against spec/deviations.yml is a human step.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+CAND="${1:?usage: sd-accept RUNTIME_TAG [REFERENCE_TAG]}"
+REF="${2:-localhost/sd-erlang:19.3-reference}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT="$ROOT/test-results/accept-$STAMP"
+mkdir -p "$OUT"
+VERDICT="$OUT/verdict.md"
+
+step() {  # name command...
+  local name="$1"; shift
+  echo "== $name"
+  if "$@" >"$OUT/$name.log" 2>&1; then r=PASS; else r=FAIL; fi
+  printf '| %s | %s | `%s` |\n' "$name" "$r" "$name.log" >>"$VERDICT"
+  echo "   $r"
+}
+
+{
+  echo "# Acceptance run $STAMP"
+  echo
+  echo "- candidate: \`$CAND\` ($(podman image inspect "$CAND" --format '{{.Id}}' 2>/dev/null || echo missing))"
+  echo "- reference: \`$REF\` ($(podman image inspect "$REF" --format '{{.Id}}' 2>/dev/null || echo missing))"
+  echo "- deviation register: \`spec/deviations.yml\` sha256 $(shasum -a 256 "$ROOT/spec/deviations.yml" | cut -d' ' -f1)"
+  echo
+  echo "| layer | result | log |"
+  echo "|---|---|---|"
+} >"$VERDICT"
+
+step L0-model           "$ROOT/bin/sd-pbt" model
+step L6-tla             "$ROOT/bin/sd-tla"
+step L1-pbt-quiescent   "$ROOT/bin/sd-pbt" 100 "$CAND"
+step L4-campaign        "$ROOT/bin/sd-pbt" campaign 10 50 "$CAND"
+step repro-Q2           "$ROOT/bin/sd-pbt" eval 'sd_pbt_q2:run(5)' "$CAND"
+step repro-O5           "$ROOT/bin/sd-pbt" eval 'sd_pbt_o5:run(10, 30000)' "$CAND"
+if [ -f "$ROOT/test-results/pbt/golden-v1-19.3.eterm" ]; then
+  cp "$ROOT/test/corpus/corpus-v1.eterm" "$ROOT/test-results/pbt/corpus-v1.eterm"
+  step L2-differential  "$ROOT/bin/sd-pbt" eval \
+    'sd_diff:compare("/pbt/out/corpus-v1.eterm", "/pbt/out/golden-v1-19.3.eterm")' "$CAND"
+else
+  printf '| L2-differential | SKIPPED | record golden traces on %s first |\n' "$REF" >>"$VERDICT"
+fi
+
+{
+  echo
+  echo "Profile and repro numbers are in the logs; compare them with the reference's"
+  echo "entries in spec/deviations.yml (Q2, O5, Q1, O6) before approving."
+} >>"$VERDICT"
+echo
+cat "$VERDICT"

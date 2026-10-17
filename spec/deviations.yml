@@ -182,3 +182,19 @@
   fidelity_target: none
   port_policy: none
   normalization: none
+
+- id: F1
+  layers: [S, I]
+  source: L5 free-node equivalence 2026-10-17 (sd_free_equiv, corpus free-corpus-v1, 20 sequences)
+  summary: >-
+    On free nodes, a failed global:register_name/2 returns
+    {no, name_or_pid_already_registered} on SD 19.3 and `no` on stock OTP
+    built from the exact parent commit. All observed states (links, name
+    tables) were identical in 20/20 sequences; only this return value
+    differs (seq 12 step 8, seq 17 step 13).
+  violates: >-
+    S2 (JPDC'16: global functions identical on free nodes) and the documented
+    global:register_name/2 contract (yes | no). Callers matching `no` break.
+  fidelity_target: undecided
+  port_policy: undecided         # recommendation: match stock (S2, backward compatibility), register as may_differ
+  normalization: none (L5 reports it)

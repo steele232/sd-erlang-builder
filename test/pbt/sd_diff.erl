@@ -135,10 +135,12 @@ observe() ->
              names => names(N, Maps)}}
        || N <- Sut]).
 
+%% An unresponsive node is itself an observation ({badrpc, _}), never a crash.
 sort_groups(L) when is_list(L) -> lists:sort([{G, lists:sort(Ns)} || {G, Ns} <- L]);
 sort_groups(Other) -> Other.
 
-norm_s_groups({Own, Other}) -> {lists:sort(Own), lists:sort(Other)};
+norm_s_groups({badrpc, _} = E) -> E;
+norm_s_groups({Own, Other}) when is_list(Own), is_list(Other) -> {lists:sort(Own), lists:sort(Other)};
 norm_s_groups(Other) -> Other.
 
 names(N, Maps) ->
