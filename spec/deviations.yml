@@ -496,13 +496,27 @@
     queue; no locks are held. So no locker is blocked waiting for a nodeup (the
     60 s wait hypothesis is refuted for this case). The first capture showed
     syncs started (new_resolver) but never completed.
-  open_hypothesis: >-
-    Ordering race on global_name_server's inbox. nodeup (from net_kernel) and
-    own_s_group_update (from s_group) come from different senders, so their
-    order is not guaranteed; a sync started before the membership arrived is
-    abandoned and never retried. Test: interpose a delay on own_s_group_update
-    (experimental patch) and measure; or trace global_name_server's message
-    order on a member.
+  investigation: >-
+    Toolkit: sd_pbt_q1:trace_replay/2 (global high-level traces, global state
+    before/after each step, locker stacks, receive-order traces of
+    global_name_server AND s_group, link visibility, s_group:info/0, and an
+    s_group:sync/0 repair attempt). Trigger: pbt-20261017T153218Z-fail.eterm,
+    Q4 in ~25-40% of replays on 19.3-exp-fixed4.
+    Two shapes: (a) step 3, new_s_group by hidden h2 on a fresh cluster, all 9
+    members know nobody; (b) step 11, creator plus 2 members isolated, with extra
+    logical nodedowns (16 vs 9) and init_connect from peers left pending.
+    REFUTED: (1) inbox ordering of nodeup vs own_s_group_update (membership
+    arrives first); (2) stuck locks / blocked locker (no locks, idle lockers,
+    empty queues); (3) R3 60 s wait; (4) hidden links (all links visible); (5)
+    s_group sync_error gate (empty sync_error/no_contact; s_group:sync/0 does not
+    repair); (6) synthetic-nodeup overtaking disconnect_node (patch 0008
+    reorders sends: 3/10 vs 2/8, no effect; in shape (a) the last s_group event
+    per peer is already nodeup).
+    Observed fact for shape (a): global_name_server on stuck nodes receives
+    init_connect from every peer but NO nodeup at all, although s_group
+    received synthetic nodeups and links are visible. Next: trace what s_group
+    does with those nodeups (handle_node_up -> {nodeup_s, CmnGroups, Node} to
+    global?), which is the remaining gap.
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}

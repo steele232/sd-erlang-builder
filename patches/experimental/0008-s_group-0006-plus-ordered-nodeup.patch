@@ -1,0 +1,114 @@
+--- a/lib/kernel/src/s_group.erl	2026-10-17 10:04:28
++++ b/lib/kernel/src/s_group.erl	2026-10-17 10:04:28
+@@ -926,7 +926,9 @@
+ 		   NodesToDisconnect0 = FreeConnectedNodes0 -- NodesToDisconnect,
+ 		   disconnect_nodes(NodesToDisconnect0);
+ 	        _ ->
++		   %% EXPERIMENTAL FIX (Q1, initiator site): keep nodes we share another s_group with.
+ 		   NodesToDisconnect = intersection(NewNodes0, nodes(connected))
++		       -- lists:usort(lists:append([Nds || {_, Nds} <- S#state.own_grps]))
+     	    end,
+ 
+ 	    NewNodes = s_group_conflict(NewNodes0, [SGroupName]),
+@@ -981,7 +983,11 @@
+                           },
+             ?debug({"s_group_handle_new_s_group_NewS", NewS}),
+ 	    _UpdateConfigFile = is_rsconfig(NewS),
+-    	    spawn(?MODULE, connect_s_group_nodes, [Nodes--[node()]]),
++    	    %% EXPERIMENTAL FIX (Q4): send the synthetic nodeups from the s_group
++    	    %% process itself, after its own {disconnect_node, _} messages. 19.3
++    	    %% spawned a process, so a nodeup could overtake the disconnect and leave
++    	    %% the peer's global believing a connected node is down.
++    	    connect_s_group_nodes(Nodes--[node()]),
+ 
+             %% Fire the appropriate probes.
+             case dyntrace:available() of
+@@ -1017,7 +1023,8 @@
+ 	   	            ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+     	   	      	    ?debug({"s_group_handle_new_s_group_check_ConnectedNodes",
+ 		                                                     ConnectedNodes}),
+-			    disconnect_nodes(ConnectedNodes -- [Node]),
++			    %% EXPERIMENTAL FIX (Q1): keep nodes we share another s_group with.
++			    disconnect_nodes((ConnectedNodes -- [Node]) -- lists:usort(lists:append([Nds || {_, Nds} <- S#state.own_grps]))),
+                             ConnectedNodes
+                end,
+ 
+@@ -1050,7 +1057,11 @@
+ 		  	  },
+              ?debug({"s_group_handle_new_s_group_check_NewS", NewS}),
+ 	     _UpdateConfigFile = is_rsconfig(NewS),
+-    	     spawn(?MODULE, connect_s_group_nodes, [Nodes--[node()]]),
++    	     %% EXPERIMENTAL FIX (Q4): send the synthetic nodeups from the s_group
++    	    %% process itself, after its own {disconnect_node, _} messages. 19.3
++    	    %% spawned a process, so a nodeup could overtake the disconnect and leave
++    	    %% the peer's global believing a connected node is down.
++    	    connect_s_group_nodes(Nodes--[node()]),
+     	     {reply, agreed, NewS}
+     end;
+ 
+@@ -1228,7 +1239,8 @@
+                 NewNodes0 ->
+ 		    ?debug({"add_nodes_Nodes", Nodes}),
+ 		    ?debug({"add_nodes_NewNodes0", NewNodes0}),
+-		    NodesToDisConnect = Nodes -- (Nodes -- nodes(connected)),
++		    %% EXPERIMENTAL FIX (Q1): keep nodes we share another s_group with.
++		    NodesToDisConnect = (Nodes -- (Nodes -- nodes(connected))) -- lists:usort(lists:append([Nds || {_, Nds} <- S#state.own_grps])),
+ 		    ?debug({"add_nodes_NodesToDisConnect", NodesToDisConnect}),
+ 		    disconnect_nodes(NodesToDisConnect),
+ 
+@@ -1279,7 +1291,11 @@
+                                   },
+                     ?debug({"s_group_handle_add_nodes_NewS", NewS}),
+ 	     	    _UpdateConfigFile = is_rsconfig(NewS),
+-    	    	    spawn(?MODULE, connect_s_group_nodes, [Nodes--[node()]]),
++    	    	    %% EXPERIMENTAL FIX (Q4): send the synthetic nodeups from the s_group
++    	    %% process itself, after its own {disconnect_node, _} messages. 19.3
++    	    %% spawned a process, so a nodeup could overtake the disconnect and leave
++    	    %% the peer's global believing a connected node is down.
++    	    connect_s_group_nodes(Nodes--[node()]),
+ 
+                     %% Fire the appropriate probes.
+                     case dyntrace:available() of
+@@ -1309,7 +1325,8 @@
+     	   ?debug({"add_nodes_check_NoGroupNodes", NoGroupNodes});
+ 	 _ ->
+ 	   ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+-    	   disconnect_nodes(ConnectedNodes -- [Node]),
++    	   %% EXPERIMENTAL FIX (Q1): keep nodes we share another s_group with.
++    	   disconnect_nodes((ConnectedNodes -- [Node]) -- lists:usort(lists:append([Nds || {_, Nds} <- S#state.own_grps]))),
+     	   ?debug({"s_group_handle_add_nodes_check_ConnectedNodes", ConnectedNodes})
+     end,
+     
+@@ -1347,7 +1364,11 @@
+ 		  },
+     ?debug({"s_group_handle_add_nodes_check_NewS", NewS}),
+     _UpdateConfigFile = is_rsconfig(NewS),
+-    spawn(?MODULE, connect_s_group_nodes, [Nodes--[node()]]),
++    %% EXPERIMENTAL FIX (Q4): send the synthetic nodeups from the s_group
++    	    %% process itself, after its own {disconnect_node, _} messages. 19.3
++    	    %% spawned a process, so a nodeup could overtake the disconnect and leave
++    	    %% the peer's global believing a connected node is down.
++    	    connect_s_group_nodes(Nodes--[node()]),
+     {reply, agreed, NewS};
+ 
+ 
+@@ -1440,11 +1461,16 @@
+     %% Send s_group info update to the own global_name_server
+     global_name_server ! {own_s_group_update, SGroupName, NewSGroupNodes},
+ 
+-    %% Disconnect from NodesToRmv
+-    disconnect_nodes(NodesToRmv),
+-    
+     NewOwnSGroups = lists:keyreplace(SGroupName, 1, S#state.own_grps,
+ 		                     {SGroupName, NewSGroupNodes}),
++
++    %% EXPERIMENTAL FIX (spec/deviations.yml Q2): only disconnect removed
++    %% nodes we no longer share any s_group with, as the initiator's path
++    %% does (NodesKeepConnected). 19.3 disconnected all of NodesToRmv, wiping
++    %% global's knowledge of them in other groups (here and, via
++    %% {disconnect_node, ...}, on the removed node).
++    StillShared = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
++    disconnect_nodes(NodesToRmv -- StillShared),
+     NewNodes0 = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
+     NewNodes = (NewNodes0 -- S#state.no_contact) -- S#state.sync_error,
+     NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],

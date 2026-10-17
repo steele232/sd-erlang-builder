@@ -7,7 +7,7 @@
 
 -include("sd_compat.hrl").
 
--export([run/1, trace_replay/2]).
+-export([run/1, trace_replay/2, msg_tracer_start/0, msg_tracer_dump/0]).
 
 run(Trials) ->
     [report(V, [trial(V) || _ <- lists:seq(1, Trials)]) || V <- [new_s_group, add_nodes]],
@@ -67,7 +67,8 @@ trace_replay(File, Tries) ->
     Maps = sd_pbt_cluster:pid_maps(),
     ets:insert(sd_pbt, {pid_maps, Maps}),
     Sut = sd_pbt_cluster:sut_nodes(),
-    [rpc:call(N, gen_server, call, [global_name_server, high_level_trace_start, infinity]) || N <- Sut],
+    [rpc:call(N, gen_server, call, [global_name_server, high_level_trace_start, 5000], 8000) || N <- Sut],
+    [rpc:call(N, ?MODULE, msg_tracer_start, [], 8000) || N <- Sut],
     Calls = [C || {set, _, C} <- CE],
     M0 = sd_model:initial_state(sd_pbt_cluster:node_types()),
     case run_calls(Calls, M0, Maps, 1) of
@@ -76,16 +77,30 @@ trace_replay(File, Tries) ->
             io:format("conformance failure at step ~p (not Q1); retrying~n", [K]),
             trace_replay(File, Tries - 1);
         {quiescence_failed, K, Call, Lag} ->
-            Traces = [{N, rpc:call(N, gen_server, call, [global_name_server, high_level_trace_get, infinity])} || N <- Sut],
-            States = [{N, rpc:call(N, sys, get_state, [global_name_server, 5000])} || N <- Sut],
+            Traces = [{N, rpc:call(N, gen_server, call, [global_name_server, high_level_trace_get, 5000], 8000)} || N <- Sut],
+            States = [{N, rpc:call(N, sys, get_state, [global_name_server, 5000], 8000)} || N <- Sut],
             %% Q4: what is each lagging node's locker doing (stack, queued messages)?
             Lockers = [{N, rpc:call(N, erlang, apply, [fun locker_info/0, []], 5000)}
                        || {N, _, Ms} <- Lag, length(Ms) >= 2],
+            MsgOrder = [{N, rpc:call(N, ?MODULE, msg_tracer_dump, [], 5000)} || N <- Sut],
+            %% Q4: are the stuck node's links to its group peers visible or hidden?
+            Links = [{N, #{visible => rpc:call(N, erlang, nodes, [visible], 5000),
+                           hidden => rpc:call(N, erlang, nodes, [hidden], 5000)}} || N <- Sut],
+            %% Q4 prediction 1: stuck peers sit in s_group's sync_error list.
+            SgInfo = [{N, rpc:call(N, s_group, info, [], 5000)} || N <- Sut],
+            %% Q4 prediction 2: an explicit s_group:sync() on every member repairs it.
+            [rpc:call(N, s_group, sync, [], 10000) || N <- Sut],
+            Repaired = sd_pbt_obs:await_quiescent(sd_pbt_impl_model(), 15000),
+            io:format("after s_group:sync() on all members: ~p~n", [element(1, Repaired)]),
             ok = file:write_file("/pbt/out/q1-trace.bin",
                                  term_to_binary(#{step => K, call => Call, lagging => Lag,
                                                   traces => Traces, states => States,
                                                   states_before => get(before_states),
-                                                  lockers => Lockers})),
+                                                  lockers => Lockers,
+                                                  msg_order => MsgOrder,
+                                                  links => Links,
+                                                  s_group_info => SgInfo,
+                                                  sync_repaired => element(1, Repaired)})),
             io:format("captured Q1 at step ~p ~P; lagging ~p~n",
                       [K, Call, 8, [{Nd, length(Ms)} || {Nd, _, Ms} <- Lag]]),
             ok
@@ -95,12 +110,13 @@ run_calls([], _M, _Maps, _K) -> ok;
 run_calls([{call, sd_pbt_statem, F, Args} = Call | Rest], M, Maps, K) ->
     %% Snapshot every node's global state before each command (kept only for
     %% the failing step): did knowledge exist before and get lost, or never form?
-    put(before_states, [{N, rpc:call(N, sys, get_state, [global_name_server, 5000])}
+    put(before_states, [{N, rpc:call(N, sys, get_state, [global_name_server, 5000], 8000)}
                         || N <- sd_pbt_cluster:sut_nodes()]),
     _ = apply(sd_pbt_statem, F, Args),
     {M1, _} = sd_pbt_impl:step(M, F, Args),
     case sd_pbt_obs:await_conformance(M1, Maps, 10000) of
         {ok, _} ->
+            put(last_model, M1),
             case sd_pbt_obs:await_quiescent(M1, 10000) of
                 {ok, _} -> run_calls(Rest, M1, Maps, K + 1);
                 {error, {not_quiescent, Lag, _}} -> {quiescence_failed, K, Call, Lag}
@@ -116,3 +132,81 @@ locker_info() ->
     Pids = [P || P <- tuple_to_list(St), is_pid(P), is_process_alive(P)],
     [erlang:process_info(P, [current_function, current_stacktrace, message_queue_len, messages])
      || P <- Pids].
+
+%% Receive-trace global_name_server on this node, keeping only the message
+%% types that decide sync ordering, as {MonotonicMs, Tag, Peer/Group}.
+msg_tracer_start() ->
+    case whereis(sd_q1_msg_tracer) of
+        undefined -> ok;
+        Old -> exit(Old, kill)
+    end,
+    Gns = whereis(global_name_server),
+    Sg = whereis(s_group),
+    T0 = erlang:monotonic_time(millisecond),
+    P = spawn(fun() ->
+                      erlang:trace(Gns, true, ['receive']),
+                      %% Q4: also s_group's receives, to see whether a synthetic
+                      %% {nodeup, Peer} overtakes {disconnect_node, Peer}.
+                      erlang:trace(Sg, true, ['receive']),
+                      msg_loop(T0, [])
+              end),
+    register(sd_q1_msg_tracer, P),
+    ok.
+
+msg_tracer_dump() ->
+    sd_q1_msg_tracer ! {dump, self()},
+    receive {msg_dump, L} -> L after 3000 -> timeout end.
+
+msg_loop(T0, Acc) ->
+    receive
+        {dump, From} ->
+            From ! {msg_dump, lists:reverse(Acc)},
+            msg_loop(T0, Acc);
+        {trace, Who, 'receive', Msg} ->
+            T = erlang:monotonic_time(millisecond) - T0,
+            Acc1 = case classify_for(Who, Msg) of
+                       skip -> Acc;
+                       C -> lists:sublist([{T, C} | Acc], 2000)
+                   end,
+            msg_loop(T0, Acc1);
+        _ ->
+            msg_loop(T0, Acc)
+    end.
+
+%% s_group's mailbox: only the two messages whose order matters.
+classify_for(Who, Msg) ->
+    case Who =:= whereis(s_group) of
+        true ->
+            case Msg of
+                {nodeup, N} -> {sg_nodeup, N};
+                {disconnect_node, N} -> {sg_disconnect_node, N};
+                _ -> skip
+            end;
+        false ->
+            classify(Msg)
+    end.
+
+classify({nodeup, N}) -> {nodeup, N};
+classify({nodeup, G, N}) -> {nodeup, G, N};
+classify({nodedown, N}) -> {nodedown, N};
+classify({own_s_group_update, G, _}) -> {own_s_group_update, G};
+classify({own_s_group_remove, G, _, _}) -> {own_s_group_remove, G};
+classify({own_s_group_delete, G}) -> {own_s_group_delete, G};
+classify({init_own_s_groups, Gs}) -> {init_own_s_groups, [G || {G, _} <- Gs]};
+classify({'$gen_cast', Cast}) when is_tuple(Cast) ->
+    Tag = element(1, Cast),
+    case lists:member(Tag, [init_connect, init_connect_s, exchange, exchange_s, exchange_ops,
+                            exchange_ops_s, resolved, resolved_s, lock_is_set, new_nodes,
+                            new_nodes_s, in_sync, async_disconnect]) of
+        true -> {Tag, peer_of(Cast)};
+        false -> skip
+    end;
+classify(_) -> skip.
+
+peer_of(Cast) ->
+    case [X || X <- tuple_to_list(Cast), is_atom(X), lists:member($@, atom_to_list(X))] of
+        [P | _] -> P;
+        [] -> none
+    end.
+
+sd_pbt_impl_model() -> get(last_model).

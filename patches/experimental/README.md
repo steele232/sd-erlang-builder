@@ -26,3 +26,4 @@ first L4 verdict was withdrawn for exactly that reason.
 | `combined-0002-0004-0006.patch` | Q1 + Q2 + C1 | image `localhost/sd-erlang:19.3-exp-fixed3` |
 | `0007-global-0004-plus-replace_no_group.patch` | Q3 (free-partition knowledge renamed into a group) | Q3 trigger 8x: pass 6 vs 4 on fixed3; traced add_nodes case gone, new_s_group failures remain. A/B vs reference: no kind worse; crash dumps 8 vs 0. **Provisionally accepted** |
 | `combined-0002-0004-0006-0007.patch` | Q1 + Q2 + Q3 + C1 | image `localhost/sd-erlang:19.3-exp-fixed4` |
+| `0008-s_group-0006-plus-ordered-nodeup.patch` | Q4 hypothesis (synthetic nodeup overtaking disconnect) | trigger replay 3/10 fail vs 2/8 without: **no effect, hypothesis refuted** |
