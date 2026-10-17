@@ -12,11 +12,35 @@ registration multicast in between misses the peer forever.
 | `SGroupNames_lock.cfg` | registration excluded during the registrant's in-flight syncs | pass | pass, 2,202 distinct states |
 | `SGroupNames_backfill.cfg` | sync completion sends the *current* table | pass | pass, 4,974 distinct states |
 
+`SGroupForeignGC.tla` models the **refined hypothesis**, from reading
+`global.erl` (0fdfcf28) after the lock analysis ruled out the snapshot window
+for 19.3. `s_group` tells `global` about membership asynchronously
+(`own_s_group_update`), and every completed sync runs
+`unregister_foreign_names/1`, which deletes names of groups not yet in `global`'s
+view. A node whose `global` lags therefore deletes freshly received group names,
+and they are never re-sent. This would explain **both O5 and O6**.
+
+| config | models | expected | result |
+|---|---|---|---|
+| `SGroupForeignGC_none.cfg` | 19.3 as read | violated | violated (63 distinct states) |
+| `SGroupForeignGC_sync_member.cfg` | membership reaches `global` before any sync | pass | pass (15) |
+| `SGroupForeignGC_gc_removal.cfg` | GC only on explicit removal | pass | pass (49) |
+
+Runtime test of the prediction: `sd_pbt_o5:run/2` snapshots, at registration
+time, which members' `global:own_s_groups/0` lacks the group. The hypothesis
+predicts that every member finally missing the name is among those.
+
 Scope and honesty:
 - 3 members and 2 names. The group already exists. There are no failures and no
   membership changes.
 - The model reproduces the *shape* of O5, and is consistent with the measured
   15% never-converge rate and with "fine before any sync or after all syncs".
-  It has **not** yet been tied line-by-line to `global.erl` (0fdfcf28). That
-  correspondence check is the next step, and it decides which fix a port adopts.
+  It has **not** yet been tied line-by-line to `global.erl` (0fdfcf28). Partial
+  reading: registration (`trans_s_group` → `set_lock_s_group`) and the sync
+  locker (`lock_nodes_safely`) both take the `?GLOBAL_RID` lock, which includes
+  the registrant. So the window cannot be "during the locked exchange". It must
+  lie between lock release and the `known` update (`resolved/6`,
+  `add_to_known`). Next step: trace `global_name_server`/locker messages on the
+  registrant during `sd_pbt_o5` trials and refine the model's `SyncFinish` into
+  separate unlock/known steps.
 - Both fixes keep `KnowledgeCompletes` (liveness) under weak fairness of sync steps.

@@ -110,7 +110,14 @@
     10 s (get_known_s_group/1 empty both ways). Every later registration in the
     group would miss that node. Resembles RELEASE R4 ("expected nodeup never
     arrived"), which RELEASE reported fixed.
-  evidence: 1 occurrence in ~76 cases (~760 commands); 0/30 deterministic replays (rare race)
+  evidence: 1 occurrence in ~76 cases (~760 commands); 0/30 deterministic replays (rare race); 2/10 runs in campaign 2
+  hypothesis: >-
+    global.erl (0fdfcf28) the_locker_message({his_the_locker,...}) waits up to
+    60000 ms for a matching nodeup, then logs "global: nodeup never came" and
+    carries on. That matches RELEASE R3 ("identical after a 60s timeout and an
+    error report"). Prediction: Q1 cases converge at ~60 s. Test: campaign with
+    SD_PBT_CONVERGE_MS=75000; if they converge, Q1 is R3 reproduced (slow, not
+    permanent).
   fidelity_target: S
   port_policy: may_differ        # a port may fix it; frequency is tracked by `bin/sd-pbt campaign`
   normalization: none (counts as a failure kind in campaign profiles)
@@ -153,8 +160,12 @@
     added members (n7 of n3,n7,n9) within 10 s, while the others received it.
     Join-time back-fill can be lost. The TLA+ model SGroupNames does not cover
     it: the name predates the sync, so the snapshot hypothesis does not explain it.
-    Candidate cause: add_nodes logically disconnects the joining nodes before
-    reconnecting, which may abort the in-flight sync.
+    Leading hypothesis (shared with O5): global's own-group view is fed
+    asynchronously by s_group (own_s_group_update), and unregister_foreign_names/1,
+    run after every completed sync, deletes names of groups not yet in that view;
+    nothing re-sends them. Model: spec/tla/SGroupForeignGC.tla (violation in
+    'none'; fixes 'sync_member' and 'gc_removal' verified). Runtime test:
+    sd_pbt_o5:run/2 lagging-view correlation.
   evidence: 1/10 campaign runs (10x50 cases, quiescent mode)
   fidelity_target: S
   port_policy: may_differ

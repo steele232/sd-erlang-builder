@@ -97,6 +97,23 @@ from a hidden driver node and checks:
 - crashing a member and crashing a gateway: isolation, then recovery
 - moving `edge4` between groups
 
+## Verification: what SD Erlang is, and how a port is checked
+
+| | |
+|---|---|
+| `spec/SD_ERLANG_SPEC.md` | SD Erlang as RELEASE specified it (design contract plus the 15-operation D3.3 semantics), with 19.3's behaviour per operation |
+| `spec/deviations.yml` | **the** register of every spec/implementation difference and what a port must do about it |
+| `spec/VERIFICATION_STRATEGY.md` | the layered oracle (L0–L7) and acceptance criteria for a port |
+| `spec/PORT_OTP29_FEASIBILITY.md` | OTP 29.1.2 drift analysis and recommended port design |
+
+```bash
+bin/sd-pbt model                 # L0: executable semantics self-tests (host OTP)
+bin/sd-pbt 100                   # L1: PropEr vs the semantics, 14 nodes (12 normal + 2 hidden)
+bin/sd-pbt campaign 10 50        # L4: failure profile of a runtime
+bin/sd-pbt eval 'sd_pbt_q2:run(5)'   # deterministic repro of defect Q2
+bin/sd-tla                       # L6: TLC on spec/tla/*.cfg
+```
+
 ## Provenance
 
 | What | Where |

@@ -9,17 +9,29 @@
 
 -export([run/2]).
 
+%% Hypothesis under test (spec/deviations.yml O5/O6): global's own-group
+%% view (global:own_s_groups/0, fed asynchronously by s_group) lags s_group's,
+%% and unregister_foreign_names/1, run after every sync, deletes the new
+%% group's names on lagging nodes. Each trial snapshots, just before the
+%% registration, which members' global view already contains g3.
+
 -define(TAB, sd_pbt).
 
 run(Trials, CapMs) ->
     catch ets:new(?TAB, [named_table, public, set]),
     Results = [trial(I, CapMs) || I <- lists:seq(1, Trials)],
-    Lat = [Ms || {converged, Ms} <- Results],
-    Never = length([x || {never, _} <- Results]),
+    Lat = [Ms || {converged, Ms, _} <- Results],
+    Never = length([x || {never, _, _} <- Results]),
     io:format("~nO5 characterisation: ~p trials, cap ~p ms~n", [Trials, CapMs]),
     io:format("  converged immediately (<=50 ms): ~p~n", [length([M || M <- Lat, M =< 50])]),
     io:format("  converged late (>50 ms):        ~p ~w~n", [length([M || M <- Lat, M > 50]), lists:sort([M || M <- Lat, M > 50])]),
-    io:format("  never within cap:               ~p ~w~n", [Never, [H || {never, H} <- Results]]),
+    io:format("  never within cap:               ~p ~w~n", [Never, [H || {never, H, _} <- Results]]),
+    io:format("  per trial: {outcome, members whose global view lacked g3 at registration, members finally missing the name}~n"),
+    [io:format("    ~p~n", [{element(1, R), Lag, Miss}]) || R = {_, _, {Lag, Miss}} <- Results],
+    Never2 = [{Lag, Miss} || {never, _, {Lag, Miss}} <- Results],
+    Explained = [x || {Lag, Miss} <- Never2, Miss -- Lag =:= []],
+    io:format("  hypothesis: in ~p/~p never-converged trials every missing member was lagging~n",
+              [length(Explained), length(Never2)]),
     ok.
 
 trial(_I, CapMs) ->
@@ -33,9 +45,23 @@ trial(_I, CapMs) ->
     {ok, _, _} = rpc:call(N("n3"), s_group, new_s_group, [g3, Members]),
     {ok, _} = sd_pbt_obs:await_conformance(M1, Maps, 10000),
     P = rpc:call(N("n8"), erlang, whereis, [sd_pbt_p3]),
+    Lagging = [M || M <- Members,
+                    not lists:keymember(g3, 1, global_view(M))],
     yes = rpc:call(N("n4"), s_group, re_register_name, [g3, b, P]),
     T0 = erlang:monotonic_time(millisecond),
-    wait(Members, P, T0, T0 + CapMs).
+    case wait(Members, P, T0, T0 + CapMs) of
+        {Outcome, X} ->
+            Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
+            {Outcome, X, {short(Lagging), short(Missing)}}
+    end.
+
+global_view(M) ->
+    case rpc:call(M, global, own_s_groups, []) of
+        L when is_list(L) -> L;
+        _ -> []
+    end.
+
+short(Ns) -> [hd(string:tokens(atom_to_list(Nd), "@")) || Nd <- Ns].
 
 wait(Members, P, T0, Deadline) ->
     Holders = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =:= P],

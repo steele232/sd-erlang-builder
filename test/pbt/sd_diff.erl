@@ -18,8 +18,11 @@
 -export([sample_corpus/3, record/2, compare/2, run_sequence/1, observe/0]).
 
 -define(TAB, sd_pbt).
--define(STABLE_MS, 500).
--define(SETTLE_CAP_MS, 15000).
+%% Must exceed global's locker retry interval, min(1000 + 100*|known|, 3000) ms
+%% (global.erl loop_the_locker/1); a shorter window can sample a quiet gap
+%% mid-sync (measured: 26-27/30 self-agreement at 500 ms).
+-define(STABLE_MS, 3500).
+-define(SETTLE_CAP_MS, 30000).
 
 %%--------------------------------------------------------------------
 %% Corpus

@@ -39,6 +39,20 @@ SD's `global.erl` changes do two separable jobs:
    (`exchange_ops_s`, `resolved_s`, `own_s_group_update/remove/delete`,
    `get_known_s_group`, `trans_s_group`).
 
+### What the 19.3 patch adds to `global.erl`
+
+31 new functions, none removed (121 → 152 functions). Grouped by job, this is
+the port's feature checklist:
+
+| Job | Functions | Notes for the port |
+|---|---|---|
+| per-group sync protocol | `handle_node_up_s`, `start_resolver_s`, `resolver_s`, `resolved_s`, `exchange_ops_s_known`, `sync_others_s`, `sync_other_s`, `new_nodes_s`, `new_nodes_f` | parallels upstream's `resolved`/`new_nodes`; upstream rewrote these in OTP 25 |
+| per-group knowledge | `get_known_s_group`, `new_known`, `new_known_synced`, `add_node_known_synced`, `known_synced_other_groups`, `combine_known`, `isknown_nodeup`, `added_s_group_nodes`, `check_in_sync`, `node_connected` | the quiescence probe the L1 harness uses |
+| per-group lock + registration | `trans_s_group`, `set_lock_s_group`, `lock_on_s_group_nodes` | registration multicasts only to `known` (O5) |
+| namespace hygiene | `unregister_foreign_names`, `replace_no_group`, `replace_no_group_s` | `unregister_foreign_names` after every sync + an async membership view = suspected cause of O5/O6 (`spec/tla/SGroupForeignGC.tla`) |
+| attributes (`choose_nodes/1`) | `add_attribute`, `remove_attribute`, `registered_attributes` | outside D3.3's 15 operations; not yet covered by any oracle |
+| plumbing | `own_s_groups`, `request`, `handle_node_up` | |
+
 ### Seam 1 already exists upstream (OTP 25+)
 
 Modern `global` asks `global_group` about topology through a narrow interface:
