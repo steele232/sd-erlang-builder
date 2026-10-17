@@ -49,3 +49,20 @@ Scope and honesty:
   registrant during `sd_pbt_o5` trials and refine the model's `SyncFinish` into
   separate unlock/known steps.
 - Both fixes keep `KnowledgeCompletes` (liveness) under weak fairness of sync steps.
+
+## `SGroupMerge.tla`: the confirmed O5 mechanism and the port's merge procedure
+
+Models partition merge within one group. Nodes that don't know each other sync
+pairwise; each side's partition is then informed by a broadcast whose receivers
+add the new nodes to `known` **without** an exchange of their own (as seen in the
+O5 high-level trace, `test-results/pbt/o5-trace.bin`).
+
+| config | mode | invariants | result |
+|---|---|---|---|
+| `SGroupMerge_none.cfg` | `sd193`: inform the *peer's* partition about *yourself*, with names learned *from that peer* (19.3 `resolved_s/6`) | Symmetric, NamespaceConvergence, PartitionTables | violated (first: Symmetric; asymmetric knowledge, a candidate mechanism for **Q1**) |
+| `SGroupMerge_ns_none.cfg` | `sd193` | NamespaceConvergence | **violated**: lone registrant n4 syncs with n1 of partition {n1,n2,n3}; n2, n3 learn n4 but never get the name. Two holders at the end, **the same shape as every failing runtime trial** |
+| `SGroupMerge_stock.cfg` | `stock`: inform *your own* partition about the whole peer partition, with the learned names; lock both partitions | all three + `<>AllKnown` | **pass** (785 distinct states) |
+
+This is the executable specification for port requirement R-NS-1. Unlike
+`SGroupNames` and `SGroupForeignGC` (hypotheses refuted at runtime), this model
+reproduces the observed failure.
