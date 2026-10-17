@@ -47,8 +47,15 @@ reset() ->
 launch(Node, Type) ->
     [Name, _] = string:tokens(atom_to_list(Node), "@"),
     Hidden = case Type of hidden -> " -hidden"; normal -> "" end,
-    Cmd = "erl -detached -noshell -name " ++ Name ++ "@" ++ ?HOST ++ Hidden ++
-          " -pa /pbt/ebin",
+    %% Crash dumps go to the mounted results dir (the container is --rm), one
+    %% file per node and launch, so a SUT crash leaves evidence.
+    %% Error reports go to a per-node log so the crashing kernel child and its
+    %% reason are recorded (detached nodes otherwise discard them).
+    Stamp = integer_to_list(erlang:system_time(millisecond)),
+    Dump = "/pbt/out/erl_crash-" ++ Name ++ "-" ++ Stamp ++ ".dump",
+    Log = "/pbt/out/log-" ++ Name ++ "-" ++ Stamp ++ ".log",
+    Cmd = "ERL_CRASH_DUMP=" ++ Dump ++ " erl -detached -noshell -name " ++ Name ++ "@" ++ ?HOST ++ Hidden ++
+          " -pa /pbt/ebin -kernel error_logger '{file,\"" ++ Log ++ "\"}'",
     _ = os:cmd(Cmd),
     ok.
 

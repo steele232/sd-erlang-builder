@@ -253,3 +253,67 @@
   fidelity_target: I (set of outcomes)
   port_policy: must_match        # a port's outcome must lie in the reference's recorded outcome set
   normalization: L2 golden traces are outcome *sets* (several reference runs); a trace passes if it is in the set
+
+- id: I3
+  layers: [M, I]
+  source: campaigns 2026-10-17 (value_mismatch add_nodes on reference and q2-fix); s_group.erl:1226-1227
+  summary: >-
+    add_nodes/2 with only already-member nodes returns {ok, G, RequestedNodes}
+    (the request minus node()), while M returns the newly added set, which is
+    empty. State is unchanged in both.
+  fidelity_target: I
+  port_policy: must_match
+  normalization: sd_pbt_statem:value_ok/5 add_nodes clause tagged I3
+
+- id: C1
+  layers: [S, M, I]
+  source: reference campaign rerun 2026-10-17 run 3 (pbt-20261017T102315Z-fail.eterm)
+  summary: >-
+    During add_nodes(g5, [n10,n11,n3,n6,n8,n9]) from n2, SUT node n6 became
+    unreachable ({badrpc, nodedown}) and several of the nodes being added lost
+    their links. Probable 19.3 node crash, cf. RELEASE R5 ("remove_nodes ...
+    crashed the Erlang node", reported fixed). Possibly also the cause of the L2
+    self-compare {badrpc, _}.
+  evidence: >-
+    21 crash dumps over 3 reference campaigns (test-results/pbt/crash-evidence-*),
+    all with the slogan "Kernel pid terminated (application_controller)
+    ({application_terminated,kernel,shutdown})". All 13 error logs captured
+    (campaign 4) show the same crash: global_name_server terminating with
+    function_clause in lists:unzip/1 at global:resolved_s/6 (global.erl:3080),
+    handling {exchange_ops_s, Peer, [], ...} from a FREE peer whose
+    HisCmnKnown is a flat node list (free-node format) where resolved_s expects
+    [{Group, Nodes}]. Repeated crashes exceed kernel's restart intensity, and
+    the node dies.
+  root_cause: >-
+    type confusion between the free-node and s_group sync formats when an
+    s_group member syncs with a free node whose free partition already spans
+    s_group members.
+  trigger: >-
+    Not reproduced deterministically (0/30 across 6 constructed variants in
+    test/pbt/sd_pbt_c1.erl). In the captured crash the free peer's known list
+    contained the hidden harness driver and a g2 member. Most likely
+    harness-assisted via H2, but realistic: production clusters have hidden
+    nodes (remote shells, observers) connected to every node.
+  fidelity_target: S
+  port_policy: may_differ
+  normalization: failure kind {conformance, _, [c1_membership, ...]} with badrpc
+
+- id: H2
+  layers: [S, I]
+  source: probe 2026-10-17 (delete_s_group then global:get_known on freed nodes and on the hidden driver)
+  summary: >-
+    When a node becomes free (delete_s_group_check -> connect_free_nodes/1), it
+    runs a global sync with every connected node, hidden nodes included.
+    {n1,n2} in g1, delete g1: n1 known=[driver,n2], n2 known=[driver,n1], driver
+    known=[n1,n2]. Stock global never makes hidden nodes members of a
+    partition, and JPDC'16 says hidden connections are non-transitive.
+  consequence: >-
+    Any hidden operational node (remote shell, observer, this harness's driver)
+    joins freed nodes' global partitions, and can bridge free partitions to
+    s_group members (precondition of the C1 crash).
+  harness_note: >-
+    The L1/L2 driver is such a hidden node. Results after a delete_s_group/
+    remove_nodes that frees nodes may be harness-assisted; classify, don't hide.
+  fidelity_target: S
+  port_policy: may_differ        # recommendation: free nodes must not sync with hidden nodes (stock semantics)
+  normalization: none

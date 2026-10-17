@@ -122,6 +122,8 @@ postcondition(#{model := M}, {call, ?MODULE, F, Args} = Call, Res) ->
 %% I-value -> M-value, using only registered divergences.
 value_ok(add_nodes, [G, Nis, Ni], _M, error, {ok, G, []}) ->
     lists:usort(Nis) -- [Ni] =:= [];                          %% I1
+value_ok(add_nodes, [G, Nis, Ni], _M, {G, []}, {ok, G, Nodes}) ->
+    lists:usort(Nodes) =:= lists:usort(Nis) -- [Ni];          %% I3
 value_ok(F, _Args, _M, Expected, Res) when F =:= new_s_group; F =:= add_nodes ->
     norm_ok_tuple(Res) =:= Expected;
 value_ok(F, _Args, _M, Expected, Res) when F =:= remove_nodes; F =:= delete_s_group ->
