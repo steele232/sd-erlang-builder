@@ -120,9 +120,39 @@ reasons (state inconsistency that persists after partitions heal, which is the
 same class as our O5/Q1). It's more work and needs a model. "Off" is easy, but
 gives up a correctness fix upstream strongly advises keeping.
 
-**Recommendation.** Per-s_group scoping. Before writing code, extend
-`spec/tla/` with a model of partition prevention per group, checked against P1
-(no cross-group visible links) and P7 (knowledge convergence).
+**Modelled (2026-10-17, `spec/tla/SGroupPOP.tla`).** "Per s_group" is
+ambiguous, because one physical link carries every group its two ends share.
+I modelled the stock algorithm exactly as 29.1.2 documents it, plus four
+scopings, on two 5-node, 3-group topologies (a chain, and a demo-like gateway
+star), with up to 2 link failures. Two invariants, checked at rest:
+- **OverlapFree:** inside every group, knowledge is transitive (upstream's
+  goal, per group).
+- **Collateral:** a group that doesn't contain both ends of a failed link is
+  untouched (P8/P12).
+
+| Policy | OverlapFree | Collateral |
+|---|---|---|
+| off | ✗ | ✓ |
+| stock, unscoped | ✗ | ✗ |
+| per-group, physical cut | ✗ | ✗ |
+| per-group, physical cut + cascade | ✓ | ✗ |
+| **per-group, logical** (drop the node from *that group's* knowledge; links stay up) | ✓ | ✓ |
+
+Two findings:
+- **Stock doesn't even meet its own goal under SD topology.** It assumes the
+  full mesh `connect_all` gives: a receiver that isn't linked to the failed
+  node ignores the report, which leaves an overlap.
+- **Any scoping that cuts physical links breaks other groups,** whether or
+  not it cascades.
+
+**Recommendation (sharpened).** Per-s_group **logical** scoping: on
+`lost_connection(A, B)` for group G, members of G drop B from G's knowledge
+only, and never cut the physical link.
+
+Caveat: this is the same *mechanism* as 19.3's logical disconnect. 19.3's
+defects (Q1/Q2) came from applying it across *all* groups, and requirement
+R-NS-2 forbids exactly that. Not yet modelled: healing (re-sync after the link
+comes back), and hidden nodes. Model those before writing code.
 
 ## D-6. Can `global_group` and s_groups coexist on one node?
 

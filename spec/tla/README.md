@@ -66,3 +66,24 @@ O5 high-level trace, `test-results/pbt/o5-trace.bin`).
 This is the executable specification for port requirement R-NS-1. Unlike
 `SGroupNames` and `SGroupForeignGC` (hypotheses refuted at runtime), this model
 reproduces the observed failure.
+
+## `SGroupPOP.tla`: decision D-5, partition prevention under overlapping groups
+
+Models 29.1.2's `prevent_overlapping_partitions` exactly as `global.erl`
+documents it: a node that loses a link multicasts `lost_connection`, and
+receivers cut the reported node. Four scopings are compared against it. The
+topologies are 5 nodes and 3 groups, as a `chain` or a gateway `star`, with
+up to 2 link failures. Invariants are checked at rest:
+- **OverlapFree:** per-group knowledge is transitive.
+- **Collateral:** groups not containing a failed link are untouched.
+- **KnowsOnlyLinked.**
+
+| config | policy | result |
+|---|---|---|
+| `SGroupPOP_stock_overlap.cfg` | stock | OverlapFree **violated**: stock assumes a full mesh; a receiver not linked to the failed node ignores the report |
+| `SGroupPOP_stock_collateral.cfg` | stock | Collateral **violated** (matches UD1 at runtime) |
+| `SGroupPOP_phys_overlap.cfg` / `_phys_collateral.cfg` | per-group physical cut | both **violated**: one link carries several groups |
+| `SGroupPOP_cascade_overlap.cfg` / `_cascade_collateral.cfg` | per-group physical cut + cascade | OverlapFree passes, Collateral **violated** |
+| `SGroupPOP_logical_chain.cfg` / `_logical_star.cfg` | per-group logical removal, links stay up | **all pass** |
+
+Not modelled yet: healing and re-sync, and hidden nodes.

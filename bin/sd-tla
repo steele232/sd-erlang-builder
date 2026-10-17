@@ -3,6 +3,7 @@
 #   bin/sd-tla            run every config; exit non-zero if an EXPECTED result differs
 # Expected results are encoded in the config file name suffix:
 #   *_none.cfg  must find a NamespaceConvergence violation (models 19.3 / O5)
+#   a cfg containing "EXPECT: violation" must find a violation
 #   other       must pass
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,6 +23,7 @@ for cfg in *.cfg; do
            -metadir "$META/${cfg%.cfg}" -config "$cfg" "$spec" 2>&1 || true)"
   if grep -q "is violated" <<<"$out"; then got=violation; elif grep -q "No error has been found" <<<"$out"; then got=pass; else got=error; fi
   case "$cfg" in *_none.cfg) want=violation ;; *) want=pass ;; esac
+  grep -q "EXPECT: violation" "$cfg" && want=violation
   states="$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 || true)"
   printf '%-28s %-10s (expected %-9s) %s\n' "$cfg" "$got" "$want" "$states"
   [ "$got" = "$want" ] || rc=1

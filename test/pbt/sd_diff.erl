@@ -239,6 +239,29 @@ norm_s_groups({Own, Other}) when is_list(Own), is_list(Other) -> {lists:sort(Own
 norm_s_groups(Other) -> Other.
 
 names(N, Maps) ->
+    case rpc:call(N, erlang, function_exported, [s_group, known_peers, 1]) of
+        true -> port_names(N, Maps);
+        _ -> ref_names(N, Maps)
+    end.
+
+%% Ports: the same {Group, Name} view from the public API only; free names
+%% appear as {undefined, Name}, as in 19.3's global_names table.
+port_names(N, Maps) ->
+    Grp = case rpc:call(N, s_group, registered_names, [{node, N}]) of
+              L when is_list(L) -> L;
+              _ -> []
+          end,
+    Free = case rpc:call(N, global, registered_names, []) of
+               F when is_list(F) -> [{undefined, Nm} || Nm <- F];
+               _ -> []
+           end,
+    Where = fun(undefined, Nm) -> rpc:call(N, global, whereis_name, [Nm]);
+               (G, Nm) -> rpc:call(N, s_group, whereis_name, [G, Nm])
+            end,
+    lists:sort([{G, Nm, sd_pbt_cluster:to_ref(Where(G, Nm), Maps)} || {G, Nm} <- Grp ++ Free]).
+
+%% 19.3 reference: unchanged observation (golden traces stay valid).
+ref_names(N, Maps) ->
     case rpc:call(N, global, registered_names, [all_names]) of
         L when is_list(L) ->
             lists:sort([{G, Name, sd_pbt_cluster:to_ref(rpc:call(N, global, whereis_name, [G, Name]), Maps)}
