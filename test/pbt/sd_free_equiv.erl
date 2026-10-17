@@ -66,7 +66,19 @@ compare(CorpusFile, FileA, FileB) ->
     io:format("free-node equivalence ~s vs ~s: ~p/~p sequences identical~n",
               [ShaA, ShaB, length(Seqs) - length(Diffs), length(Seqs)]),
     [io:format("  seq ~p: ~P~n", [I, D, 30]) || {I, D} <- Diffs],
+    %% UD2 (spec/deviations.yml): a default-method name conflict keeps the
+    %% smaller pid, which depends on pid allocation. Secondary count only;
+    %% the strict count above is the verdict.
+    PidBlind = [I || {I, A, B} <- lists:zip3(lists:seq(1, length(Seqs)), TA, TB),
+                     A =/= B, pid_blind(A) =:= pid_blind(B)],
+    io:format("  of the differences, ~p equal modulo pid identity on the same node (UD2): ~w~n",
+              [length(PidBlind), PidBlind]),
     case Diffs of [] -> ok; _ -> {error, [I || {I, _} <- Diffs]} end.
+
+pid_blind({pid, Node, _I}) -> {pid, Node};
+pid_blind(T) when is_tuple(T) -> list_to_tuple(pid_blind(tuple_to_list(T)));
+pid_blind(L) when is_list(L) -> [pid_blind(X) || X <- L];
+pid_blind(X) -> X.
 
 first_diff(A, B) ->
     hd([{step, K, {a, SA}, {b, SB}}

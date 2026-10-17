@@ -87,6 +87,23 @@ Modern `global` has one namespace. The per-group namespace is SD's core feature
 | **B** | Topology via a `global_group`-compatible provider (`s_group` implements `participant/member/publish` over overlapping groups); namespaces in a separate per-node server that reuses `global`'s lock + multicall algorithm restricted to group members | small: `kernel.erl` (supervisor child), `net_kernel` publish hook, `global` partition-prevention scoping | medium: name-conflict resolution and sync timing are re-implemented | Smallest diff against upstream; L1/L2 decide whether fidelity holds. Best fit for the guide's "small semantic patch set" goal |
 | **C** | Namespaces on top of `pg` scopes, one scope per s_group | smallest | **high**: `pg` has no uniqueness or locking; it is a different semantics from `register_name/3` (S4 "neither Name nor Pid already registered") | Disqualified as a faithful port; at most an alternative design to compare against |
 
+### Option L (library only, no kernel change) is ruled out by measurement
+
+`port/sdx` implements the whole s_group API as a library on stock 29.1.2. It
+reaches L3 10/10 (3 and 15 nodes) and L1 100/100, but stock `global` forces a
+choice that a library can't escape:
+
+| Kernel setting | S3 / P1: no transitive meshing across groups | S2 / P10: free nodes behave as distributed Erlang (L5 vs stock 29.1.2) |
+|---|---|---|
+| `connect_all false` | holds (the library meshes members itself) | **1/20**: `global` never syncs under `connect_all false` (29.1.2 `global.erl`: nodeup only records the connection id), so free nodes share no namespace. Upstream documents this: `global` "will not be reliably delivered unless both connect_all and prevent_overlapping_partitions are enabled" |
+| `connect_all true` | **violated**: transitive meshing joins groups (L1 C4 caught it in 1/20 cases; the demo15 P1 safety window is the stronger oracle) | **19/20**; the one difference is the winner of a name conflict, decided by pid order (see UD2) |
+
+`connect_all` is read once when `global` starts, so it can't differ per
+group. The decision "should `global` sync with / mesh towards this node?" has
+to be made per node pair, and that's Seam 1. The kernel hook in design B is
+therefore necessary, not just convenient. P18 (stock `global` name API on
+members, R-API-5) leads to the same conclusion independently.
+
 **Recommendation: B**, with A as the fallback if L2 shows B can't reach fidelity.
 B turns the guide's maintenance problem (rebasing a 3,000-line `global.erl`)
 into maintaining a provider against a small, documented upstream interface.

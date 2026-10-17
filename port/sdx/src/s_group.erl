@@ -287,15 +287,27 @@ handle_cast({free_peers, From, Peers, Answer}, S) ->
         false -> ok
     end,
     {noreply, S};
+handle_cast({pid_down, G, Name, Pid}, S) ->
+    {noreply, del_pid_name(G, Name, Pid, S)};
 handle_cast(_, S) -> {noreply, S}.
 
 %% A registered process died: drop its name on this replica (every member
 %% monitors the pid, so all replicas converge).
-handle_info({'DOWN', Ref, process, _, _}, S) ->
+handle_info({'DOWN', Ref, process, Pid, _}, S) ->
     case maps:take(Ref, S#st.mons) of
-        {{G, Name}, Mons} -> {noreply, del_name(G, Name, S#st{mons = Mons})};
+        {{G, Name}, Mons} ->
+            %% Only some replicas monitor (see put_name/4): tell the rest.
+            Others = maps:get(G, S#st.groups, []) -- [node()],
+            _ = [gen_server:cast({?MODULE, M}, {pid_down, G, Name, Pid}) || M <- Others],
+            {noreply, del_pid_name(G, Name, Pid, S#st{mons = Mons})};
         error -> {noreply, S}
     end;
+%% P16 when the pid's node goes away: drop its names on every replica
+%% (stock global does the same on nodedown).
+handle_info({nodedown, N}, S) ->
+    Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S#st.names), {Nm, P} <- maps:to_list(Ns),
+                          node(P) =:= N],
+    {noreply, lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S, Gone)};
 %% R-NS-1 (merge on join): a member that connects after a registration was
 %% multicast never received it. Each node is authoritative for the names of
 %% its own processes and pushes them, per shared group, to the new peer.
@@ -315,9 +327,23 @@ put_name(G, Name, Pid, S) ->
     case maps:get(Name, Ns, undefined) of
         Pid -> S;
         _ ->
-            Ref = erlang:monitor(process, Pid),
-            S#st{names = maps:put(G, maps:put(Name, Pid, Ns), S#st.names),
-                 mons = maps:put(Ref, {G, Name}, S#st.mons)}
+            S1 = S#st{names = maps:put(G, maps:put(Name, Pid, Ns), S#st.names)},
+            %% Monitoring a pid on an unconnected node would open a new
+            %% visible link to it (C4/P1, found by L1). Monitor only when the
+            %% link already exists; the other replicas learn of the death
+            %% through {pid_down, ...} or nodedown.
+            case node(Pid) =:= node() orelse lists:member(node(Pid), nodes(connected)) of
+                true ->
+                    Ref = erlang:monitor(process, Pid),
+                    S1#st{mons = maps:put(Ref, {G, Name}, S1#st.mons)};
+                false -> S1
+            end
+    end.
+
+del_pid_name(G, Name, Pid, S) ->
+    case maps:get(Name, maps:get(G, S#st.names, #{}), undefined) of
+        Pid -> del_name(G, Name, S);
+        _ -> S
     end.
 
 %% Merge one pushed name. Same name, different pid: both sides keep the

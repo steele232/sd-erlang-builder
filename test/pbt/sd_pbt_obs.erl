@@ -10,6 +10,12 @@
 %%                   G == M's namespace of G  (replication on all members)
 %%   C3 connections  M's connections of N  ⊆  nodes(connected) on N
 %%                   (I may hold extra links: O2/O4 in spec/deviations.yml)
+%%   C4 visibility   (opt-in, SD_PBT_VISIBILITY=1; P1 + S2) every VISIBLE link
+%%                   on N (nodes() on N) joins two nodes that share a group in
+%%                   M, or two free nodes, or is a connection M itself holds
+%%                   (links kept by remove_nodes/2, O1 must_match). C3 counts
+%%                   hidden links too, so without C4 a fully meshed cluster
+%%                   passes L1.
 %%
 %% Not compared (M constructs with no stable observable in I): free normal
 %% group partitions and their namespaces, node visibility (hidden vs normal).
@@ -42,7 +48,11 @@ observe_node(N, PidMaps, Driverless) ->
                 Cs when is_list(Cs) -> lists:sort(Driverless(Cs));
                 _ -> []
             end,
-    #{groups => Groups, names => Names, conns => Conns}.
+    Vis = case rpc:call(N, erlang, nodes, [visible]) of
+              Vs when is_list(Vs) -> lists:sort(Driverless(Vs));
+              _ -> []
+          end,
+    #{groups => Groups, names => Names, conns => Conns, vis => Vis}.
 
 group_names(N, G, PidMaps) ->
     case is_port_runtime(N) of
@@ -72,14 +82,25 @@ is_port_runtime(N) ->
 diff(Model, Obs, Nodes) ->
     lists:append([node_diff(N, Model, maps:get(N, Obs)) || N <- Nodes]).
 
-node_diff(N, Model, #{groups := IGroups, names := INames, conns := IConns}) ->
+node_diff(N, Model, #{groups := IGroups, names := INames, conns := IConns} = Obs) ->
     MGroups = [{G, Nis} || {G, Nis, _} <- sd_model:groups(Model), lists:member(N, Nis)],
     MNames = [{G, Ns} || {G, Nis, Ns} <- sd_model:groups(Model), lists:member(N, Nis)],
     {N, _, MConns, _} = sd_model:node_record(N, Model),
     [{N, c1_membership, {model, MGroups}, {impl, IGroups}} || MGroups =/= IGroups] ++
     [{N, c2_namespace, {model, MNames}, {impl, INames}}
      || is_list(IGroups), MGroups =:= IGroups, MNames =/= INames] ++
-    [{N, c3_connections_missing, MConns -- IConns} || (MConns -- IConns) =/= []].
+    [{N, c3_connections_missing, MConns -- IConns} || (MConns -- IConns) =/= []] ++
+    [{N, c4_visible_outside_group, Bad}
+     || os:getenv("SD_PBT_VISIBILITY") =:= "1",
+        Bad <- [[M || M <- maps:get(vis, Obs, []),
+                      not lists:member(M, MConns), not visible_ok(N, M, Model)]],
+        Bad =/= []].
+
+visible_ok(N, M, Model) ->
+    Free = fun(X) -> element(4, sd_model:node_record(X, Model)) =:= no_group end,
+    lists:any(fun({_G, Nis, _}) -> lists:member(N, Nis) andalso lists:member(M, Nis) end,
+              sd_model:groups(Model))
+        orelse (Free(N) andalso Free(M)).
 
 %% Quiescence: global on every member knows every other member of each of
 %% its groups. Not part of the conformance relation (M has no such notion);

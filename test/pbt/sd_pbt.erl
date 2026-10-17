@@ -74,8 +74,11 @@ campaign_cases(N) ->
     T0 = erlang:monotonic_time(millisecond),
     Outcomes = [begin
                     setup(),
+                    %% start_size: with numtests 1 PropEr would generate at
+                    %% size 1, i.e. 0-1 commands per case (measured).
                     case proper:quickcheck(sd_pbt_statem:prop_s_group(),
-                                           [{numtests, 1}, {max_size, 25}, noshrink, quiet]) of
+                                           [{numtests, 1}, {start_size, 25}, {max_size, 25},
+                                            noshrink, quiet]) of
                         true -> pass;
                         _ -> failure_kind()
                     end

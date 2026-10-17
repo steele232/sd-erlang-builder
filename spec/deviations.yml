@@ -583,3 +583,21 @@
   fidelity_target: stock29
   port_policy: must_match_stock29
   normalization: L5 for ports uses stock 29.1.2 as reference
+
+- id: UD2
+  layers: [stock29, port]
+  source: L5 free-corpus-v1, 2026-10-17; free-sdx-ca vs free-stock29 (19/20) and control free-sdx-nostart vs free-stock29 (20/20)
+  summary: >-
+    Two partitions registered the same name for different pids on one node;
+    on merge, global's default resolver (random_exit_name) keeps the smaller
+    pid. Which pid is smaller depends on that node's pid allocation, and the
+    prototype runs extra processes (s_group server, mesh/rpc helpers). The
+    same image with s_group not started matches stock 29.1.2 20/20, so the
+    difference comes from those processes, not from global.
+  fidelity_target: stock29
+  port_policy: may_differ        # any s_group-capable runtime runs extra processes
+  normalization: >-
+    L5: after a name conflict resolved by the default method, either
+    conflicting pid is an acceptable survivor (not yet implemented in
+    sd_free_equiv:compare/3)
+
