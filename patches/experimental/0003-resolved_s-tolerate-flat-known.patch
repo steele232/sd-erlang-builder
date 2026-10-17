@@ -1,0 +1,16 @@
+--- a/lib/kernel/src/global.erl	2026-10-17 05:05:04
++++ b/lib/kernel/src/global.erl	2026-10-17 05:05:04
+@@ -3056,7 +3056,12 @@
+     exchange_ops_s_known(SGroups, [{SGroup, NewKnown} | Known], S).
+ 
+ 
+-resolved_s(Node, HisCmnSGroups, HisCmnKnown, HisResolved, Names_ext, S0) ->
++%% EXPERIMENTAL FIX (spec/deviations.yml C1): a free peer answers with the
++%% stock {resolved, ...} message, whose known list is flat ([node()]), and it can
++%% reach this s_group path via {save_ops, Node}. 19.3 then crashed in
++%% lists:unzip/1 (global.erl:3080). A flat list means no common s_groups.
++resolved_s(Node, HisCmnSGroups, HisCmnKnown0, HisResolved, Names_ext, S0) ->
++    HisCmnKnown = [GN || {_G, _Ns} = GN <- HisCmnKnown0],
+     %% NC changed Group->HisCmnSGroups,
+     %% Known->CmnKnownNodes, HisKnown->HisCmnKnownNodes,
+     %% CmnKnown::[{SGroupName, Nodes}], HisCmnKnown::[{SGroupName, Nodes}].

@@ -27,8 +27,17 @@ for i in $(seq 1 "$ROUNDS"); do
     SD_PBT_HARNESS_ID="$h" "$ROOT/bin/sd-pbt" campaign 1 "$N" "$rt" > "$OUT/$arm-$i.log" 2>&1 || true
     k="$(grep -E '^run 1/1:' "$OUT/$arm-$i.log" | sed -E 's/^run 1\/1: //; s/ \(pbt-.*//')"
     echo "$arm	${k:-harness_failure}" | tee -a "$OUT/outcomes.tsv"
+    # SUT crash dumps written during this run belong to this arm (C1 counting).
+    mkdir -p "$OUT/dumps-$arm"
+    nd=0
+    for d in "$ROOT"/test-results/pbt/erl_crash-*.dump; do
+      [ -e "$d" ] || continue; mv "$d" "$OUT/dumps-$arm/"; nd=$((nd + 1))
+    done
+    echo "$arm	$nd" >> "$OUT/crashes.tsv"
+    rm -f "$ROOT"/test-results/pbt/log-*.log
   done
 done
+awk -F'\t' '{c[$1]+=$2; r[$1]+=($2>0)} END {for (a in c) printf "SUT crash dumps arm %s: %d (in %d runs)\n", a, c[a], r[a]}' "$OUT/crashes.tsv" | sort
 python3 - "$OUT/outcomes.tsv" "$ROUNDS" <<'PY'
 import sys
 from math import comb

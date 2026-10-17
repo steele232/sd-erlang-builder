@@ -1,0 +1,28 @@
+--- a/lib/kernel/src/global.erl	2026-10-17 06:20:58
++++ b/lib/kernel/src/global.erl	2026-10-17 06:20:58
+@@ -3056,7 +3056,12 @@
+     exchange_ops_s_known(SGroups, [{SGroup, NewKnown} | Known], S).
+ 
+ 
+-resolved_s(Node, HisCmnSGroups, HisCmnKnown, HisResolved, Names_ext, S0) ->
++%% EXPERIMENTAL FIX (spec/deviations.yml C1): a free peer answers with the
++%% stock {resolved, ...} message, whose known list is flat ([node()]), and it can
++%% reach this s_group path via {save_ops, Node}. 19.3 then crashed in
++%% lists:unzip/1 (global.erl:3080). A flat list means no common s_groups.
++resolved_s(Node, HisCmnSGroups, HisCmnKnown0, HisResolved, Names_ext, S0) ->
++    HisCmnKnown = [GN || {_G, _Ns} = GN <- HisCmnKnown0],
+     %% NC changed Group->HisCmnSGroups,
+     %% Known->CmnKnownNodes, HisKnown->HisCmnKnownNodes,
+     %% CmnKnown::[{SGroupName, Nodes}], HisCmnKnown::[{SGroupName, Nodes}].
+@@ -3077,7 +3082,10 @@
+                [] ->
+ 	          [];
+ 	       _ ->
+-	          {_SGroups, HisCmnKnownNodes1} = lists:unzip(HisCmnKnown),
++	          %% EXPERIMENTAL FIX (C1b): 19.3 reused the bound variable _SGroups
++	          %% here, so this matched the peer's group list against ours and
++	          %% crashed (badmatch) whenever order or content differed.
++	          {_HisSGroups, HisCmnKnownNodes1} = lists:unzip(HisCmnKnown),
+     		  lists:usort(lists:append(HisCmnKnownNodes1))
+            end,
+ 

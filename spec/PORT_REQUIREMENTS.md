@@ -23,7 +23,7 @@ that checks it.
 
 | Req | Requirement | Source | Test that must improve | Fix evidence so far |
 |---|---|---|---|---|
-| R-NS-1 | after a pairwise sync for group G, each side broadcasts the names it learned to **its own** G-partition, with the peer side as new nodes (stock `resolved/5` semantics, per group). Lock cancellation and in-flight sync handling must follow stock too | O5, O6 | `sd_pbt_o5` (19.3: 13/50 never converge) | 0001 fixes the repro (0/25) but is rejected by A/B (p = 0.003): partial protocol |
+| R-NS-1 | after a pairwise sync for group G, each side broadcasts the names it learned to **its own** G-partition, with the peer side as new nodes (stock `resolved/5` semantics, per group). Lock cancellation and in-flight sync handling must follow stock too. Constraint from the O5 trace: receivers add the new nodes to their known set *without* a pairwise exchange, so the broadcast must carry the learned name ops, or force a real exchange | O5, O6 | `sd_pbt_o5` (19.3: 13/50 never converge) | 0001 fixes the repro (0/25) but is rejected by A/B (p = 0.003): partial protocol |
 | R-NS-2 | group knowledge completes for every member after membership changes | Q1 | L4 `not_quiescent` kinds | none |
 | R-ISO-1 | removing a node from g1 must not disturb `global` knowledge in other groups shared with it | Q2 | `sd_pbt_q2` (19.3: 5/5) | 0002: 0/5, A/B p = 0.29, provisionally accepted |
 | R-CRASH-1 | no sync-format confusion between free and s_group peers; `global_name_server` must not crash on any peer message | C1 | L4 with crash-dump capture (19.3: 21 dumps, `global.erl:3080`) | none |

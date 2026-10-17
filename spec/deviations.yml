@@ -292,9 +292,20 @@
     [{Group, Nodes}]. Repeated crashes exceed kernel's restart intensity, and
     the node dies.
   root_cause: >-
-    type confusion between the free-node and s_group sync formats when an
-    s_group member syncs with a free node whose free partition already spans
-    s_group members.
+    TWO crash sites in global:resolved_s/6.
+    C1a: type confusion between sync formats. A free peer answers with the stock
+    {resolved, ...} message carrying a flat known list; it reaches resolved_s via
+    {save_ops, Node}, and lists:unzip/1 gets function_clause (global.erl:3080).
+    C1b: the variable _SGroups is bound twice ({_SGroups, CmnKnownNodes1} =
+    unzip(CmnKnown), then {_SGroups, HisCmnKnownNodes1} = unzip(HisCmnKnown)).
+    In Erlang, _Name is a bound variable, not a wildcard, so the peer's common-group
+    list must equal ours in content AND order, or the match fails (badmatch). It
+    triggers when nodes share >= 2 groups (observed {[g6,g5], ...}).
+  targeted_test: >-
+    test/corpus/c1-seq30.eterm (corpus-v1 sequence 30) run with
+    sd_diff:crash_rate/3 under the L2 runner. Reference: a node crashes at step
+    18 in 4/8 runs (2/3 golden recordings + 2/5). 0003 (C1a only): 1/6, still C1b.
+    0004 (C1a+C1b): 0/6.
   trigger: >-
     Not reproduced deterministically (0/30 across 6 constructed variants in
     test/pbt/sd_pbt_c1.erl). In the captured crash the free peer's known list
