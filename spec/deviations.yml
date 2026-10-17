@@ -57,8 +57,8 @@
   layers: [S, I]
   source: observed (demo15 move step)
   summary: a link created before two nodes share a group stays hidden after they join one; add_nodes/2 itself creates such a link
-  fidelity_target: undecided
-  port_policy: undecided         # needs a human decision; until then the harness reports, never asserts
+  fidelity_target: S
+  port_policy: may_differ        # D-1 decided 2026-10-17 (spec/DECISIONS.md): a pre-existing link becomes visible once the ends share a group
   normalization: report-only
 
 - id: O4
@@ -288,8 +288,8 @@
   violates: >-
     S2 (JPDC'16: global functions identical on free nodes) and the documented
     global:register_name/2 contract (yes | no). Callers matching `no` break.
-  fidelity_target: undecided
-  port_policy: undecided         # recommendation: match stock (S2, backward compatibility), register as may_differ
+  fidelity_target: stock
+  port_policy: may_differ        # D-2 decided 2026-10-17 (spec/DECISIONS.md): free nodes return stock `no`
   normalization: none (L5 reports it)
 
 - id: N1
@@ -411,8 +411,8 @@
     node terminates". 19.3 starts normally with the UNION g1=[d1,d2,d3]
     (s_group:update_conf/1 merges every same-name definition). Identical in
     17.4-rebased, so never implemented as described.
-  fidelity_target: undecided
-  port_policy: undecided         # S says terminate; I merges. Users may rely on merge-by-union
+  fidelity_target: S
+  port_policy: may_differ        # D-3 decided 2026-10-17 (spec/DECISIONS.md): refuse to start with a clear error (D3.3 ch. 3.1)
   normalization: none
 
 - id: DN2
@@ -422,8 +422,8 @@
     Conflicting remote same-name groups: D3.3 says "keep a record of no s_group
     with that name"; 19.3 keeps the merged group in s_groups/0's other groups.
     Same in 17.4.
-  fidelity_target: undecided
-  port_policy: undecided
+  fidelity_target: S
+  port_policy: may_differ        # D-4 decided 2026-10-17 (spec/DECISIONS.md): drop duplicate remote groups (D3.3 ch. 3.1)
   normalization: none
 
 - id: AT1
@@ -458,6 +458,7 @@
     library prototype (port/sdx) differs on 6/11 probe lines: members still use
     stock global's free namespace. Needs the kernel hook (design B).
 
+- id: U1
   layers: [S, M, I]
   source: SUT error logs from reference campaigns 2026-10-17 (test-results/pbt/crash-evidence-3)
   summary: >-
@@ -469,7 +470,7 @@
     keeps both. Stock global has the same multi-name merge behaviour for the free
     namespace (?WARN_DUPLICATED_NAME), so this is inherited, but per group.
   fidelity_target: undecided
-  port_policy: undecided         # stock global keeps both names; M forbids it
+  port_policy: undecided         # deferred by the user 2026-10-17 (needed when the R-NS-1 merge is implemented); stock global keeps both names; M forbids it
   normalization: none (log-only; not yet asserted by L1)
 
 - id: Q3
@@ -600,4 +601,36 @@
     L5: after a name conflict resolved by the default method, either
     conflicting pid is an acceptable survivor (not yet implemented in
     sd_free_equiv:compare/3)
+
+- id: POP1
+  layers: [stock29, port]
+  source: decision D-5 2026-10-17; spec/tla/SGroupPOP.tla, SGroupPOPHeal.tla; UD1
+  summary: >-
+    prevent_overlapping_partitions on SD nodes is scoped per s_group and is
+    LOGICAL: on lost_connection(A, B) for group G, members of G drop B from G's
+    knowledge only; no physical link is cut. Reports carry the link
+    incarnation, and stale ones are ignored. Non-SD nodes keep stock behaviour.
+    19.3 had no such mechanism.
+  fidelity_target: S
+  port_policy: may_differ        # vs 19.3 under link failures only; stock nodes must_match_stock29
+  normalization: L2 corpora contain no link failures, so no L2 effect; failure scenarios are judged against the models
+
+- id: GG1
+  layers: [port]
+  source: decision D-6 2026-10-17
+  summary: global_group and s_groups are mutually exclusive per node; a node configured with both refuses to boot
+  fidelity_target: I              # 19.3 replaced global_group outright
+  port_policy: must_match
+  normalization: none
+
+- id: RC1
+  layers: [port]
+  source: decision on spec/proposals/D5-reconnect.md 2026-10-17 (option L)
+  summary: >-
+    No automatic re-dial in the kernel (as 19.3). The port exports an SD-aware
+    s_group:connect_node/1 (connects only when a group is shared, else
+    ignored) for libcluster-style tools; option K (kernel re-dial) is deferred.
+  fidelity_target: I
+  port_policy: must_match        # plus the new function (additive)
+  normalization: none
 

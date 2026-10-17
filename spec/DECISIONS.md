@@ -46,6 +46,8 @@ connected) and avoids a surprise asymmetry. But it's a behaviour change from
 `may_differ`. No user can reasonably depend on a member being hidden from its
 own group.
 
+**Decision (2026-10-17, Jonathan):** accept the recommendation.
+
 ## D-2. Free-node `global:register_name/2` failure value (F1)
 
 **Question.** On a node in no s_group, should a failed `global:register_name/2`
@@ -63,6 +65,8 @@ L5 found: 18/20 sequences identical, and the 2 differences are exactly this
 Code written for SD 19.3 is very unlikely to exist outside RELEASE.
 
 **Recommendation.** Match stock, per S2's backward-compatibility goal.
+
+**Decision (2026-10-17, Jonathan):** accept the recommendation.
 
 ## D-3 / D-4. Duplicate group names in launch configs (DN1, DN2)
 
@@ -88,6 +92,8 @@ a config typo into an outage at boot.
 **Recommendation.** D-3: follow D3.3 (refuse to start, with a clear error); this
 is configuration validation, which belongs at boot. D-4: follow D3.3 (ignore).
 Both are `may_differ`.
+
+**Decision (2026-10-17, Jonathan):** accept the recommendation.
 
 ## D-5. `prevent_overlapping_partitions` under s_groups
 
@@ -166,6 +172,8 @@ needs three parts:
 Who re-dials (kernel, or a library via libcluster's connect/list_nodes
 hooks, with no fork needed) is analysed in `spec/proposals/D5-reconnect.md`.
 
+**Decision (2026-10-17, Jonathan):** accept the recommendation for per-s_group logical scoping. Regarding D5-connect.md, I choose L for now and then we can defer keep K in our back pocket if we find that desirable later. 
+
 ## D-6. Can `global_group` and s_groups coexist on one node?
 
 **Question.** 19.3 *replaced* `global_group` with `s_group` in the kernel
@@ -179,6 +187,8 @@ dynamic).
 
 **Recommendation.** Mutually exclusive per node: refuse to boot if both
 `global_groups` and `s_groups` are configured. Revisit only if a user needs both.
+
+**Decision (2026-10-17, Jonathan):** accept the recommendation.
 
 ## U1. One pid under two names in one group
 
@@ -195,6 +205,8 @@ deterministic resolution rule at merge time.
 **Recommendation.** Follow M, and resolve at merge with the existing resolve
 method (keep one name, unregister the rest). It's low-risk, and makes P4 hold
 unconditionally.
+
+**Decision (2026-10-17, Jonathan):** accept the recommendation.
 
 ## Design decisions that are already evidence-backed (confirm or overrule)
 
