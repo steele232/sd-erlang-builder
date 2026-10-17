@@ -1,0 +1,22 @@
+--- a/lib/kernel/src/global.erl	2026-10-17 02:59:18
++++ b/lib/kernel/src/global.erl	2026-10-17 02:59:18
+@@ -3110,8 +3110,18 @@
+     %% {del_lock, ...} is received after {new_nodes, ...} 
+     %% (except when abcast spawns process(es)...).
+     %% CmnNodeSGroups::[{Node, [SGroupName]}]
++    %% EXPERIMENTAL FIX (spec/deviations.yml O5 root cause): like stock
++    %% global:resolved/5, tell OUR partition (own known members of each common
++    %% group) about the peer side [Node | HisCmnKnown(G)] together with the Ops
++    %% we just learned. 19.3 sent this to the peer's partition instead.
++    OwnCmnNodeSGroups = s_group:ng_pairs(CmnKnown),
++    PeerSide = [{G, lists:usort([Node | case lists:keyfind(G, 1, HisCmnKnown) of
++                                            {G, HNs} -> HNs;
++                                            false -> []
++                                        end])}
++                || G <- HisCmnSGroups],
+     NewNodesF = fun() ->
+-                         new_nodes_f(CmbNodeSGroups, HisCmnKnown, Ops,
++                         new_nodes_f(OwnCmnNodeSGroups, PeerSide, Ops,
+                                      Names_ext, ExtraInfo, [])
+                 end,
+     ?debug({"resolved_s_NewNodesF", NewNodesF}),

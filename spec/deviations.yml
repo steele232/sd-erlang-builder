@@ -92,12 +92,31 @@
     Data: 6/25 and 7/25 trials never converge (cap 30 s). Typically only the
     registrant plus one node hold the name; a whole sub-partition of 5 members
     never gets it, while all membership knowledge is complete.
-    (4) OPEN hypothesis: partition merge. Two partially-synced sub-partitions of
-    the group sync through one pair; resolved name ops are broadcast only to the
-    other side's currently known nodes (resolved_s -> new_nodes_f(..., HisCmnKnown,
-    Ops, ...)), and nodes that become known later transitively never receive
-    them. Next: global:high_level_trace_start/0 on the registrant in a failing
-    trial, then a TLA+ model with partitions and representative exchange.
+    (4) ROOT CAUSE (confirmed by global high-level trace of a failing trial,
+    test-results/pbt/o5-trace.bin via sd_pbt_o5:trace_failure/1, plus a code diff
+    against the stock base 5da9e0ab). After a pairwise sync, stock
+    global:resolved/5 abcasts {new_nodes, node(), Ops, ..., [Node|HisKnown], ...}
+    to its OWN partition (Known), Ops being the names it just learned. SD's
+    resolved_s/6 sends {new_nodes_s, ...} via new_nodes_f(CmbNodeSGroups, ...),
+    where CmbNodeSGroups is built from HisCmnKnown, the PEER's partition. Its own
+    partition therefore never receives the learned names. The trace label still
+    says {abcast, CmnKnownNodes}, showing the intended target.
+    Failing trial: registrant n4 (alone) synced with n10 of an already-formed
+    partition {n3,n5,n6,n7,n9,n10}; n10 learned b, while the other five got
+    new_nodes_s from n4 with {ops, []} and recorded {added,[n4]} without ins_name.
+    Fix for a port: per common group, broadcast to own known members with the
+    peer side [Node | HisCmnKnown(G)] as new nodes (stock pattern).
+    VERIFIED BY INTERVENTION: patches/experimental/0001-resolved_s-broadcast-to-own-partition.patch
+    (one function), image localhost/sd-erlang:19.3-exp-merge-fix (never an oracle).
+    sd_pbt_o5:run(25, 30000): reference 13/50 never converge (6/25 + 7/25);
+    patched 0/25 never (max 432 ms). One-sided Fisher exact p ~ 0.006.
+    BUT the L4 regression gate REJECTS this one-function fix: campaign 10x50 on the
+    patched image gives {not_quiescent,new_s_group} in 6/10 runs vs 1/10 on the
+    reference (p ~ 0.03). Some members never complete any group sync (e.g. n1,n5,n9
+    isolated in g2). Retargeting the broadcast without stock's full merge protocol
+    (symmetric partition broadcasts and lock cancellation for the peer's nodes)
+    abandons in-flight syncs. Lesson for the port: implement the stock merge
+    semantics whole (design B), not by piecemeal patching.
   fidelity_target: S
   port_policy: may_differ        # a port may fix this; the fix must be shown by sd_pbt_o5 on both runtimes
   normalization: >-
@@ -179,9 +198,11 @@
     added members (n7 of n3,n7,n9) within 10 s, while the others received it.
     Join-time back-fill can be lost. The TLA+ model SGroupNames does not cover
     it: the name predates the sync, so the snapshot hypothesis does not explain it.
-    Hypothesis under test: the foreign-name GC with a lagging global view
-    (spec/tla/SGroupForeignGC.tla). It was refuted for O5 but not yet tested for
-    O6 (join-time). O6 also fits the open partition-merge hypothesis of O5.
+    Most likely the same root cause as O5 (resolved_s broadcasts learned names to
+    the peer's partition instead of its own): newly added members that first
+    synced among themselves form a partition; it merges with the name holders
+    through one pair, and the rest of that partition never gets the names.
+    Not yet confirmed by trace for O6 specifically.
   evidence: 1/10 campaign runs (10x50 cases, quiescent mode)
   fidelity_target: S
   port_policy: may_differ

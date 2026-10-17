@@ -7,7 +7,7 @@
 %% Distinguishes R3-style slow convergence from permanent divergence.
 -module(sd_pbt_o5).
 
--export([run/2]).
+-export([run/2, trace_failure/1]).
 
 %% Hypothesis under test (spec/deviations.yml O5/O6): global's own-group
 %% view (global:own_s_groups/0, fed asynchronously by s_group) lags s_group's,
@@ -80,4 +80,41 @@ wait(Members, P, T0, Deadline) ->
         {true, _} -> {converged, Now - T0};
         {false, true} -> {never, length(Holders)};
         _ -> timer:sleep(50), wait(Members, P, T0, Deadline)
+    end.
+
+%% Repeat trials with global's high-level trace on every member until one
+%% never converges (max Tries); dump all members' traces to /pbt/out.
+trace_failure(Tries) when Tries =< 0 ->
+    io:format("no failing trial captured~n"),
+    ok;
+trace_failure(Tries) ->
+    catch ets:new(?TAB, [named_table, public, set]),
+    ok = sd_pbt_cluster:reset(),
+    Maps = sd_pbt_cluster:pid_maps(),
+    ets:insert(?TAB, {pid_maps, Maps}),
+    N = fun(X) -> list_to_atom(X ++ "@pbt.sd.lab") end,
+    Members = lists:sort([N(X) || X <- ["n10", "n3", "n4", "n5", "n6", "n7", "n9"]]),
+    [ok = rpc:call(M, gen_server, call, [global_name_server, high_level_trace_start, infinity]) || M <- Members],
+    T0 = os:timestamp(),
+    M0 = sd_model:initial_state(sd_pbt_cluster:node_types()),
+    {M1, _} = sd_model:new_s_group(M0, g3, Members, N("n3")),
+    {ok, _, _} = rpc:call(N("n3"), s_group, new_s_group, [g3, Members]),
+    {ok, _} = sd_pbt_obs:await_conformance(M1, Maps, 10000),
+    P = rpc:call(N("n8"), erlang, whereis, [sd_pbt_p3]),
+    TReg = os:timestamp(),
+    yes = rpc:call(N("n4"), s_group, re_register_name, [g3, b, P]),
+    T1 = erlang:monotonic_time(millisecond),
+    case wait(Members, P, T1, T1 + 15000) of
+        {converged, _} ->
+            trace_failure(Tries - 1);
+        {never, _} ->
+            Traces = [{M, rpc:call(M, gen_server, call, [global_name_server, high_level_trace_get, infinity])} || M <- Members],
+            Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
+            %% term_to_binary: traces contain pids, which file:consult/1 cannot read back.
+            File = "/pbt/out/o5-trace.bin",
+            ok = file:write_file(File, term_to_binary(
+                    #{t0 => T0, t_register => TReg, registrant => N("n4"),
+                      missing => Missing, traces => Traces})),
+            io:format("captured failing trial: missing ~p, traces in ~s~n", [short(Missing), File]),
+            ok
     end.

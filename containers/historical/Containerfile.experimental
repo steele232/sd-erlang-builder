@@ -1,0 +1,16 @@
+# EXPERIMENTAL runtime: the 19.3 reference image with the kernel modules
+# touched by a patch in patches/experimental/ recompiled. Used only to test a
+# root-cause hypothesis and a fix design. NEVER an oracle: verification
+# layers compare against localhost/sd-erlang:19.3-reference.
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+ARG PATCH
+COPY ${PATCH} /src/experimental.patch
+RUN set -e; \
+    K=$(ls -d /opt/sd-erlang/lib/erlang/lib/kernel-*); \
+    mkdir -p /src/exp/lib/kernel && cp -r "$K/src" /src/exp/lib/kernel/src; \
+    cd /src/exp && patch -p1 < /src/experimental.patch; \
+    for f in $(grep '^+++ b/lib/kernel/src/' /src/experimental.patch | sed -E 's|^\+\+\+ b/(lib/kernel/src/[^[:space:]]+).*|\1|'); do \
+      erlc +debug_info -I "$K/include" -o "$K/ebin" "/src/exp/$f"; echo "recompiled $f"; \
+    done; \
+    sha256sum /src/experimental.patch > /opt/sd-erlang/SD_EXPERIMENTAL
