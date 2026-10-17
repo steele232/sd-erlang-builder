@@ -536,8 +536,10 @@
     s_group-member join paths (initiator, new_s_group_check, add_nodes,
     add_nodes_check). Synthetic nodeups still start group syncs, since
     isknown_nodeup checks group knowledge, and 0007 moves free knowledge safely.
-    Trigger replay: 9/10 pass (vs ~5/18 failing on fixed4/fixed5). 20-replay
-    comparison and A/B pending. One residual failure: shape (a)?
+    Trigger replay: 9/10 pass at first, BUT 20-replay comparison: fixed6 (0009)
+    10/20 fail vs fixed4 7/20 fail. NO IMPROVEMENT; the 9/10 was small-sample
+    luck. The shape-b mechanism as traced is real, but removing the join-path
+    disconnects does not fix the stuck sessions, so another canceller remains.
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}

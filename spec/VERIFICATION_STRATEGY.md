@@ -157,6 +157,9 @@ Lessons from applying this to two experimental fixes (`patches/experimental/`):
   must not regress. Fix 0001 passed the first test (O5 0/25 vs 13/50,
   p = 0.003). Its first L4 "regression" (6/10 vs 3/20) was withdrawn once later
   reference campaigns showed 5/10 and 6/9 under newer harness versions.
+- **Targeted repros need ≥ 20 replays.** Fix 0009 looked like 9/10 → pass, but
+  20 replays gave 10/20 failing vs 7/20 for its baseline. Replay-rate claims
+  below n = 20 are anecdotes.
 - **Only interleaved A/B counts.** `bin/sd-pbt-ab` alternates single runs on
   reference and candidate, with harness images built once and pinned by ID, so
   drift, load and harness changes affect both arms equally. Interleaved A/B on
