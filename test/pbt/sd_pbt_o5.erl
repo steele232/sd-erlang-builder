@@ -20,19 +20,27 @@
 run(Trials, CapMs) ->
     catch ets:new(?TAB, [named_table, public, set]),
     Results = [trial(I, CapMs) || I <- lists:seq(1, Trials)],
-    Lat = [Ms || {converged, Ms, _} <- Results],
-    Never = length([x || {never, _, _} <- Results]),
+    Lat = [Ms || {converged, Ms, _, _} <- Results],
+    Never = length([x || {never, _, _, _} <- Results]),
     io:format("~nO5 characterisation: ~p trials, cap ~p ms~n", [Trials, CapMs]),
     io:format("  converged immediately (<=50 ms): ~p~n", [length([M || M <- Lat, M =< 50])]),
     io:format("  converged late (>50 ms):        ~p ~w~n", [length([M || M <- Lat, M > 50]), lists:sort([M || M <- Lat, M > 50])]),
-    io:format("  never within cap:               ~p ~w~n", [Never, [H || {never, H, _} <- Results]]),
+    io:format("  never within cap:               ~p ~w~n", [Never, [H || {never, H, _, _} <- Results]]),
     io:format("  per trial: {outcome, members whose global view lacked g3 at registration, members finally missing the name}~n"),
-    [io:format("    ~p~n", [{element(1, R), Lag, Miss}]) || R = {_, _, {Lag, Miss}} <- Results],
-    Never2 = [{Lag, Miss} || {never, _, {Lag, Miss}} <- Results],
+    [io:format("    ~p~n", [{element(1, R), Lag, Miss}]) || R = {_, _, {Lag, Miss}, _} <- Results],
+    Never2 = [{Lag, Miss} || {never, _, {Lag, Miss}, _} <- Results],
     Explained = [x || {Lag, Miss} <- Never2, Miss -- Lag =:= []],
-    io:format("  hypothesis: in ~p/~p never-converged trials every missing member was lagging~n",
+    io:format("  foreign-GC hypothesis: in ~p/~p never-converged trials every missing member was lagging~n",
               [length(Explained), length(Never2)]),
+    Kn = [{Miss, Unknown} || {never, _, {_, Miss}, Unknown} <- [extend(R) || R <- Results]],
+    KnExplained = [x || {Miss, Unknown} <- Kn, Miss -- Unknown =:= []],
+    io:format("  O5=Q1 hypothesis: in ~p/~p never-converged trials every missing member is still absent "
+              "from the registrant's global known(g3) at the end~n", [length(KnExplained), length(Kn)]),
+    [io:format("    missing ~p, registrant-unknown ~p~n", [M, U]) || {M, U} <- Kn],
     ok.
+
+extend({O, X, LM, Unknown}) -> {O, X, LM, Unknown};
+extend({O, X, LM}) -> {O, X, LM, []}.
 
 trial(_I, CapMs) ->
     ok = sd_pbt_cluster:reset(),
@@ -52,7 +60,9 @@ trial(_I, CapMs) ->
     case wait(Members, P, T0, T0 + CapMs) of
         {Outcome, X} ->
             Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
-            {Outcome, X, {short(Lagging), short(Missing)}}
+            RegKnown = rpc:call(N("n4"), global, get_known_s_group, [g3]),
+            Unknown = (Members -- [N("n4")]) -- RegKnown,
+            {Outcome, X, {short(Lagging), short(Missing)}, short(Unknown)}
     end.
 
 global_view(M) ->

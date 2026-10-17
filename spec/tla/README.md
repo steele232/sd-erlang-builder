@@ -27,8 +27,13 @@ and they are never re-sent. This would explain **both O5 and O6**.
 | `SGroupForeignGC_gc_removal.cfg` | GC only on explicit removal | pass | pass (49) |
 
 Runtime test of the prediction: `sd_pbt_o5:run/2` snapshots, at registration
-time, which members' `global:own_s_groups/0` lacks the group. The hypothesis
-predicts that every member finally missing the name is among those.
+time, which members' `global:own_s_groups/0` lacks the group.
+
+**Result: refuted for O5.** In 0/6 and 0/7 never-converged trials was any member
+lagging, and the registrant's `known(g3)` was complete at the end. The model
+remains a valid demonstration of *a* failure mode and its fixes, but it is not
+O5's cause. See the `mechanism_investigation` entry in `spec/deviations.yml`.
+The open hypothesis is partition merge with representative exchange.
 
 Scope and honesty:
 - 3 members and 2 names. The group already exists. There are no failures and no

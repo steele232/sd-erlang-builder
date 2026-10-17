@@ -15,7 +15,8 @@
 %%   sd_diff:compare(CorpusFile, GoldenFile)   run corpus, diff against golden
 -module(sd_diff).
 
--export([sample_corpus/3, record/2, compare/2, run_sequence/1, observe/0]).
+-export([sample_corpus/3, record/2, compare/2, run_sequence/1, observe/0,
+         final_states/3]).
 
 -define(TAB, sd_pbt).
 %% Must exceed global's locker retry interval, min(1000 + 100*|known|, 3000) ms
@@ -93,6 +94,16 @@ deltas({_, R1, O1}, {_, R2, O2}) ->
         K <- [own_s_groups, s_groups, own_nodes, visible, hidden, names],
         maps:get(K, maps:get(N, O1, #{}), none) =/= maps:get(K, maps:get(N, O2, #{}), none)].
 
+%% Run sequence I of a corpus K times; report how many distinct final
+%% observations occur (1 = deterministic at this settle window).
+final_states(CorpusFile, I, K) ->
+    Seq = lists:nth(I, load_corpus(CorpusFile)),
+    Finals = [element(3, lists:last(run_sequence(Seq))) || _ <- lists:seq(1, K)],
+    Distinct = length(lists:usort(Finals)),
+    io:format("seq ~p x~p (stable ~p ms): ~p distinct final observation(s)~n",
+              [I, K, stable_ms(), Distinct]),
+    ok.
+
 %%--------------------------------------------------------------------
 %% Running a sequence
 %%--------------------------------------------------------------------
@@ -109,11 +120,22 @@ run_sequence(Cmds) ->
 
 %% At rest = two observations ?STABLE_MS apart are identical (capped).
 settle() ->
-    Deadline = erlang:monotonic_time(millisecond) + ?SETTLE_CAP_MS,
+    Deadline = erlang:monotonic_time(millisecond) + settle_cap_ms(),
     settle_loop(observe(), Deadline).
 
+%% SD_DIFF_STABLE_MS / SD_DIFF_SETTLE_CAP_MS override (experiments only;
+%% golden traces must be recorded and compared with the same values).
+stable_ms() -> env_int("SD_DIFF_STABLE_MS", ?STABLE_MS).
+settle_cap_ms() -> env_int("SD_DIFF_SETTLE_CAP_MS", ?SETTLE_CAP_MS).
+
+env_int(Var, Default) ->
+    case os:getenv(Var) of
+        false -> Default;
+        V -> list_to_integer(V)
+    end.
+
 settle_loop(Prev, Deadline) ->
-    timer:sleep(?STABLE_MS),
+    timer:sleep(stable_ms()),
     Obs = observe(),
     case Obs =:= Prev orelse erlang:monotonic_time(millisecond) > Deadline of
         true -> Obs;

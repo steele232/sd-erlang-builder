@@ -82,11 +82,30 @@
     nodes, then re_register_name); sd_pbt_o5:run(20, 120000) on 19.3: 17/20
     converged in 106-1421 ms, 3/20 never converged in 120 s (2-3 of 7 holders).
     Distinct from R3 (D3.3 reports eventual convergence after 60 s).
+  mechanism_investigation: >-
+    (1) snapshot-vs-known window (spec/tla/SGroupNames.tla): ruled out by code
+    reading; registration and sync share the ?GLOBAL_RID lock on the registrant.
+    (2) foreign-name GC with a lagging global view (SGroupForeignGC.tla):
+    REFUTED at runtime; 0/6 and 0/7 never-converged trials had any lagging member.
+    (3) stuck knowledge (O5 = Q1): REFUTED at runtime; the registrant's
+    known(g3) was complete at the end in 7/7 never-converged trials.
+    Data: 6/25 and 7/25 trials never converge (cap 30 s). Typically only the
+    registrant plus one node hold the name; a whole sub-partition of 5 members
+    never gets it, while all membership knowledge is complete.
+    (4) OPEN hypothesis: partition merge. Two partially-synced sub-partitions of
+    the group sync through one pair; resolved name ops are broadcast only to the
+    other side's currently known nodes (resolved_s -> new_nodes_f(..., HisCmnKnown,
+    Ops, ...)), and nodes that become known later transitively never receive
+    them. Next: global:high_level_trace_start/0 on the registrant in a failing
+    trial, then a TLA+ model with partitions and representative exchange.
   fidelity_target: S
   port_policy: may_differ        # a port may fix this; the fix must be shown by sd_pbt_o5 on both runtimes
   normalization: >-
-    the quiescent PBT mode waits for global group knowledge to settle before each
-    command (O5 cannot fire); the eager mode does not and is EXPECTED_FAIL on 19.3
+    the quiescent PBT mode waits for global group knowledge to complete before each
+    command, so a registration multicasts to every member and this race cannot fire
+    from a registration. Note: complete knowledge does NOT imply consistent name
+    tables (see mechanism (3)), so quiescence is a scheduling aid, not a proof of
+    convergence. The eager mode is EXPECTED_FAIL on 19.3.
 
 # ---- found by bin/sd-pbt (PropEr conformance vs. 19.3) ----
 
@@ -160,12 +179,9 @@
     added members (n7 of n3,n7,n9) within 10 s, while the others received it.
     Join-time back-fill can be lost. The TLA+ model SGroupNames does not cover
     it: the name predates the sync, so the snapshot hypothesis does not explain it.
-    Leading hypothesis (shared with O5): global's own-group view is fed
-    asynchronously by s_group (own_s_group_update), and unregister_foreign_names/1,
-    run after every completed sync, deletes names of groups not yet in that view;
-    nothing re-sends them. Model: spec/tla/SGroupForeignGC.tla (violation in
-    'none'; fixes 'sync_member' and 'gc_removal' verified). Runtime test:
-    sd_pbt_o5:run/2 lagging-view correlation.
+    Hypothesis under test: the foreign-name GC with a lagging global view
+    (spec/tla/SGroupForeignGC.tla). It was refuted for O5 but not yet tested for
+    O6 (join-time). O6 also fits the open partition-merge hypothesis of O5.
   evidence: 1/10 campaign runs (10x50 cases, quiescent mode)
   fidelity_target: S
   port_policy: may_differ
@@ -198,3 +214,16 @@
   fidelity_target: undecided
   port_policy: undecided         # recommendation: match stock (S2, backward compatibility), register as may_differ
   normalization: none (L5 reports it)
+
+- id: N1
+  layers: [I]
+  source: L2 self-agreement 2026-10-17 (corpus-v1 seq 24 and 30); sd_diff:final_states/3
+  summary: >-
+    After delete_s_group/1 the newly free nodes re-form free groups
+    nondeterministically. Final own_nodes/0 on free nodes and hidden-link sets
+    differ between runs of the same sequence, even with a 10 s stability window
+    (seq 24: 2 distinct finals in 3 runs; seq 30: 3 in 3). M's NewFreeNodes is
+    deterministic, so I is a nondeterministic refinement of it.
+  fidelity_target: I (set of outcomes)
+  port_policy: must_match        # a port's outcome must lie in the reference's recorded outcome set
+  normalization: L2 golden traces are outcome *sets* (several reference runs); a trace passes if it is in the set

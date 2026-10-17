@@ -58,6 +58,8 @@ podman run --rm --init --network sd-pbt --hostname pbt.sd.lab \
   -e SD_RUNTIME_IMAGE_ID="$RUNTIME_ID" \
   -e SD_PBT_CONVERGE_MS="${SD_PBT_CONVERGE_MS:-10000}" \
   -e SD_PBT_MODE="${SD_PBT_MODE:-quiescent}" \
+  ${SD_DIFF_STABLE_MS:+-e SD_DIFF_STABLE_MS="$SD_DIFF_STABLE_MS"} \
+  ${SD_DIFF_SETTLE_CAP_MS:+-e SD_DIFF_SETTLE_CAP_MS="$SD_DIFF_SETTLE_CAP_MS"} \
   -v "$OUT:/pbt/out" \
   "$TAG" erl -noshell -hidden -name driver@pbt.sd.lab -pa /pbt/ebin -eval "
     R = (catch $EXPR),
