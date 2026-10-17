@@ -115,7 +115,11 @@
     (p = 0.018). VERDICT WITHDRAWN: later reference campaigns under newer harness
     versions gave 5/10 and 6/9 for the same kind (censoring and drift; see
     VERIFICATION_STRATEGY L4), so the comparison was not like-for-like. To be
-    settled by the interleaved A/B campaign (bin/sd-pbt-ab). Some members never complete any group sync (e.g. n1,n5,n9
+    settled by the interleaved A/B campaign (bin/sd-pbt-ab).
+    INTERLEAVED A/B (10 rounds, pinned harness d246e586/f93ba915, source
+    d974847): {not_quiescent,new_s_group} reference 1/10 vs fix 8/10, one-sided
+    Fisher p = 0.003 -> fix 0001 REJECTED. It also removed O6-style c2_namespace
+    failures (2/10 -> 0/10; not significant). Some members never complete any group sync (e.g. n1,n5,n9
     isolated in g2). Retargeting the broadcast without stock's full merge protocol
     (symmetric partition broadcasts and lock cancellation for the peer's nodes)
     abandons in-flight syncs. Lesson for the port: implement the stock merge
@@ -319,4 +323,23 @@
     remove_nodes that frees nodes may be harness-assisted; classify, don't hide.
   fidelity_target: S
   port_policy: may_differ        # recommendation: free nodes must not sync with hidden nodes (stock semantics)
+  normalization: none
+
+- id: RS1
+  layers: [S, I]
+  source: test/pbt/sd_pbt_rsconfig.erl (P14), 2026-10-17
+  summary: >-
+    With -rsconfig, a membership change made within the same second as the
+    previous one is not persisted. new_s_group then add_nodes back-to-back:
+    0/3 restarts recovered the latest membership (one file even held []); with
+    2 s between the changes, 3/3 recovered. Violates S8 (D3.3 ch. 2: the file "is
+    updated by the node every time the s_group configuration changes").
+  root_cause: >-
+    s_group.erl record_state/0 rewrites <node>.config only if
+    stime_lastmod_difference(STime, mtime) > 0, comparing the change time with
+    the file's mtime at 1-second resolution (calendar datetimes), so a second
+    change in the same second is skipped. The write is also asynchronous (a
+    spawned process per change), so writes can race.
+  fidelity_target: S
+  port_policy: may_differ        # a port should persist every change (e.g. versioned write, fsync)
   normalization: none

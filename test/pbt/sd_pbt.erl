@@ -8,9 +8,12 @@
 %%   sd_pbt:campaign(Runs, N)   Runs independent quickchecks of N cases each,
 %%                              no shrinking; tallies failure kinds. The tally
 %%                              is the runtime's failure profile.
+%%   sd_pbt:campaign_cases(N)   N independent single-case quickchecks: per-case
+%%                              failure rates WITHOUT censoring (a run that stops
+%%                              at its first failure hides later kinds)
 -module(sd_pbt).
 
--export([run/1, run/2, replay/1, replay_stats/2, campaign/2]).
+-export([run/1, run/2, replay/1, replay_stats/2, campaign/2, campaign_cases/1]).
 
 -define(OUT, "/pbt/out").
 -define(TAB, sd_pbt).
@@ -65,6 +68,23 @@ campaign(Runs, NumTests) ->
     io:format("~ncampaign: ~p runs x ~p cases in ~p s~nfailure profile: ~p~n",
               [Runs, NumTests, Secs, Tally]),
     write_profile(Runs, NumTests, Secs, Tally),
+    ok.
+
+campaign_cases(N) ->
+    T0 = erlang:monotonic_time(millisecond),
+    Outcomes = [begin
+                    setup(),
+                    case proper:quickcheck(sd_pbt_statem:prop_s_group(),
+                                           [{numtests, 1}, {max_size, 25}, noshrink, quiet]) of
+                        true -> pass;
+                        _ -> failure_kind()
+                    end
+                end || _ <- lists:seq(1, N)],
+    Tally = lists:foldl(fun(O, Acc) -> maps:update_with(O, fun(C) -> C + 1 end, 1, Acc) end,
+                        #{}, Outcomes),
+    Secs = (erlang:monotonic_time(millisecond) - T0) div 1000,
+    io:format("~ncampaign_cases: ~p independent cases in ~p s~nper-case profile: ~p~n", [N, Secs, Tally]),
+    write_profile(N, 1, Secs, Tally),
     ok.
 
 write_profile(Runs, NumTests, Secs, Tally) ->

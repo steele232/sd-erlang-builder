@@ -149,8 +149,9 @@ Lessons from applying this to two experimental fixes (`patches/experimental/`):
   p = 0.003). Its first L4 "regression" (6/10 vs 3/20) was withdrawn once later
   reference campaigns showed 5/10 and 6/9 under newer harness versions.
 - **Only interleaved A/B counts.** `bin/sd-pbt-ab` alternates single runs on
-  reference and candidate with one harness version, so drift, load and harness
-  changes affect both arms equally.
+  reference and candidate, with harness images built once and pinned by ID, so
+  drift, load and harness changes affect both arms equally. Interleaved A/B on
+  fix 0001: `{not_quiescent,new_s_group}` 1/10 vs 8/10, p = 0.003, rejected.
 
 ## L5 — Free-node equivalence with stock OTP
 

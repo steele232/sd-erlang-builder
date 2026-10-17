@@ -7,7 +7,7 @@ never be used as the reference in any verification layer.
 
 | patch | deviation | effect measured |
 |---|---|---|
-| `0001-resolved_s-broadcast-to-own-partition.patch` | O5 (and probably O6) | `sd_pbt_o5:run(25, 30000)`: 0/25 never converge, vs 13/50 on the reference. L4 verdict **withdrawn**: 6/10 vs 3/20 pooled reference (p = 0.018) looked like a regression, but later reference campaigns gave 5/10 and 6/9. Pending interleaved A/B (`bin/sd-pbt-ab`) |
+| `0001-resolved_s-broadcast-to-own-partition.patch` | O5 (and probably O6) | `sd_pbt_o5:run(25, 30000)`: 0/25 never converge, vs 13/50 on the reference. **Rejected by interleaved A/B** (`bin/sd-pbt-ab`, 10 rounds): `{not_quiescent,new_s_group}` 8/10 vs reference 1/10, p = 0.003. (An earlier non-interleaved verdict was withdrawn as methodologically invalid; the interleaved one stands) |
 | `0002-remove_nodes_check-keep-shared-nodes.patch` | Q2 | `sd_pbt_q2:run(5)`: 0/5 lost vs 5/5. L4: 4/10 vs 3/20, p = 0.14 (no significant regression). **Provisionally accepted** |
 
 Build: `podman build --build-arg RUNTIME_IMAGE=<reference id> --build-arg PATCH=<patch>
