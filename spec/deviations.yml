@@ -166,6 +166,45 @@
     error report"). Prediction: Q1 cases converge at ~60 s. Test: campaign with
     SD_PBT_CONVERGE_MS=75000; if they converge, Q1 is R3 reproduced (slow, not
     permanent).
+  r3_test: >-
+    REFUTED as R3: campaign with SD_PBT_CONVERGE_MS=75000 (10x50) still ended
+    {not_quiescent,new_s_group} in 5/10 runs, so the stuck syncs outlast the 60 s
+    "nodeup never came" recovery path. Typical shape: the new_s_group creator and
+    one other member never sync with the other members (e.g. n4, n8 in g6),
+    while the rest form a partition.
+  evidence_capture: >-
+    At a Q1 failure (pbt-20261017T145222Z-fail.eterm, new_s_group(g3, ...) by n8),
+    the stuck nodes had NO held global locks, idle lockers and empty queues, so it
+    is not a stuck lock. The newly created group g3 was fully known; the
+    incomplete knowledge was in g6, a PRE-EXISTING group shared by the same
+    nodes (n12 knew only [n6] in g6). The previous quiescence check passed, so
+    g6 knowledge was complete before the command.
+  refuted: >-
+    (a) R3 60 s path (5/10 still stuck at 75 s); (b) stuck global locks
+    (none held); (c) simple Q2-class logical disconnect on group creation:
+    test/pbt/sd_pbt_q1.erl with 2 and 3 shared g6 members, via new_s_group and
+    add_nodes, 0/20 lost knowledge (too simple: the re-learn came via a direct
+    sync, which recomputes all common groups).
+  ROOT_CAUSE: >-
+    CONFIRMED BY INTERVENTION. Same class as Q2: SD's logical disconnect
+    (s_group:disconnect_nodes/1 -> global nodedown) of nodes that still share
+    ANOTHER group wipes global's knowledge in that other group; only the new
+    group is re-synced, and the node is re-learned transitively via
+    new_nodes_s, which carries only that sync's groups. The locker's flat known
+    list then suppresses any direct re-sync, so it is permanent.
+    Evidence: captured replay of pbt-20261017T145222Z-fail.eterm on the image
+    with 0002+0004 (where Q1 shows in 4/10 replays): g6 known/synced on 4 nodes
+    COMPLETE before step 12 (new_s_group g3) and partially wiped after it.
+    Disconnect sites: handle_call new_s_group (initiator, NodesToDisconnect),
+    new_s_group_check, add_nodes, add_nodes_check.
+    Fixes: 0005 (receiver sites + add paths only): still 4/10. 0006 (adds the
+    initiator site): 10/10 pass. Combined image localhost/sd-erlang:19.3-exp-fixed3.
+  failure_shapes: >-
+    Across 30 stored not_quiescent failures: 24 show only MUTUAL non-knowledge
+    (pairs that never completed a sync); 6 show asymmetric pairs (a knows b,
+    b does not know a). The asymmetric minority is the shape SGroupMerge.tla
+    (mode sd193) predicts; the mutual majority fits the stuck-locker / 60 s
+    hypothesis.
   fidelity_target: S
   port_policy: may_differ        # a port may fix it; frequency is tracked by `bin/sd-pbt campaign`
   normalization: none (counts as a failure kind in campaign profiles)

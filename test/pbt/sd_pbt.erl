@@ -119,6 +119,7 @@ failure_kind() ->
         [{_, #{harness_error := E}}] -> {harness_error, element(1, E)};
         [{_, #{call := {call, _, F, _}, detail := {false, _, _}}}] -> {value_mismatch, F};
         [{_, #{call := {call, _, F, _}, detail := {_, {error, {not_quiescent, _}}, _}}}] -> {not_quiescent, F};
+        [{_, #{call := {call, _, F, _}, detail := {_, {error, {not_quiescent, _, _}}, _}}}] -> {not_quiescent, F};
         [{_, #{call := {call, _, F, _}, detail := {_, {error, Diff}, _}}}] when is_list(Diff) ->
             {conformance, F, lists:usort([element(2, D) || D <- Diff])};
         [{_, #{call := {call, _, F, _}}}] -> {other, F};

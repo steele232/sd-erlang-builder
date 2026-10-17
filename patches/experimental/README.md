@@ -20,3 +20,7 @@ campaign profile must not regress, measured **interleaved** against the
 reference on the same harness version (`bin/sd-pbt-ab`). Comparisons against
 reference campaigns from other sessions or harness versions are not valid. 0001's
 first L4 verdict was withdrawn for exactly that reason.
+
+| `0005-s_group-0002-plus-join-keep-shared.patch` | Q1 (receiver/add sites) | Q1 trigger replay 4/10 fail, no better than without: incomplete |
+| `0006-s_group-0005-plus-initiator.patch` | Q1 (adds the `new_s_group` initiator site) | Q1 trigger replay **10/10 pass** (vs 4/10 without, 10/10 fail on reference). Regression A/B pending |
+| `combined-0002-0004-0006.patch` | Q1 + Q2 + C1 | image `localhost/sd-erlang:19.3-exp-fixed3` |

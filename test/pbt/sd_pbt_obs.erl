@@ -84,10 +84,34 @@ quiescent_loop(Model, T0, Deadline) ->
         [] -> {ok, erlang:monotonic_time(millisecond) - T0};
         _ ->
             case erlang:monotonic_time(millisecond) > Deadline of
-                true -> {error, {not_quiescent, Lagging}};
+                true -> {error, {not_quiescent, Lagging, lock_evidence(Lagging)}};
                 false -> timer:sleep(?POLL_MS), quiescent_loop(Model, T0, Deadline)
             end
     end.
+
+%% Q1 evidence: global's lock table (and locker/registrar message queues) on
+%% the nodes that never completed a sync. Hypothesis: a lock left held by an
+%% aborted sync blocks all later syncs involving that node.
+lock_evidence(Lagging) ->
+    %% The most-lagging nodes (fewest peers known) are the stuck ones.
+    Ranked = lists:reverse(lists:keysort(2, [{N, length(Ms)} || {N, _G, Ms} <- Lagging])),
+    Nodes = lists:usort([N || {N, _} <- lists:sublist(Ranked, 2)]),
+    %% Formatted on the SUT side as text: raw pids would make the report
+    %% unreadable by file:consult/1.
+    [{N, rpc:call(N, erlang, apply, [fun evidence_text/0, []], 5000)} || N <- Nodes].
+
+evidence_text() ->
+    Gns = whereis(global_name_server),
+    St = (try sys:get_state(Gns, 2000) catch _:_ -> unavailable end),
+    Locker = case St of
+                 T when is_tuple(T) -> [P || P <- tuple_to_list(T), is_pid(P)];
+                 _ -> []
+             end,
+    LockerInfo = [erlang:process_info(P, [current_function, current_stacktrace, message_queue_len])
+                  || P <- Locker, is_process_alive(P)],
+    iolist_to_binary(io_lib:format("~P", [#{locks => ets:tab2list(global_locks),
+                                            gns_state => St,
+                                            pid_fields => LockerInfo}, 200])).
 
 known(N, G) ->
     case rpc:call(N, global, get_known_s_group, [G]) of
