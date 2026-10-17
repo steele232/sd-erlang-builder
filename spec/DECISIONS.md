@@ -108,6 +108,13 @@ overlapping partitions by design. Per s_group, or off for SD nodes?
 **19.3 does.** Nothing of the kind; the feature didn't exist. So 19.3 offers no
 fidelity target here.
 
+**Measured (UD1).** On free nodes, stock OTP 20 and stock 29.1.2 behave
+identically on 19/20 sequences. The difference is this mechanism: one
+`erlang:disconnect_node(n6, n9)` makes OTP 29's `global` cut n6 and n9 off from
+*all other nodes too*. Under s_groups, "n6 is not connected to n9" is the normal
+state for nodes in different groups. Left unscoped, the mechanism would tear
+down exactly the overlaps SD builds.
+
 **Trade-off.** Per-group scoping keeps the protection upstream added for good
 reasons (state inconsistency that persists after partitions heal, which is the
 same class as our O5/Q1). It's more work and needs a model. "Off" is easy, but

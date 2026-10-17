@@ -8,6 +8,6 @@
   %% 15-node demo: {topology, [{Node, [{seeds, _}, {services, _}]}]} from config.
   %% registration: joined (default) | boot -- see sd_demo_registrar.
   {env, [{registration, joined}]},
-  {modules, [sd_demo_app, sd_demo_sup, sd_demo_worker, sd_demo_seeder,
+  {modules, [sd_compat, sd_demo_app, sd_demo_sup, sd_demo_worker, sd_demo_seeder,
              sd_demo_router, sd_demo_registrar, sd_demo_client, sd_demo_check, sd_demo_scenario,
              sd15_scenario, sd15_repro]}]}.

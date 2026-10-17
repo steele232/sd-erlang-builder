@@ -7,12 +7,7 @@
 -define(GET_STACK(_Stack), erlang:get_stacktrace()).
 -endif.
 
-%% `catch Expr` is deprecated in OTP 29; this try/catch keeps its observable
+%% `catch Expr` is deprecated in OTP 29. sd_compat:safe/1 keeps its observable
 %% semantics on OTP 20 and 29 (throw -> value, exit -> {'EXIT', R}, error ->
 %% {'EXIT', {R, []}}), so traces recorded by either harness compare equal.
-%% (Stack traces are dropped: they differ between OTP releases anyway.)
--define(CATCH(Expr), (try Expr
-                      catch throw:CATCH_T -> CATCH_T;
-                            exit:CATCH_R -> {'EXIT', CATCH_R};
-                            error:CATCH_R -> {'EXIT', {CATCH_R, []}}
-                      end)).
+-define(CATCH(Expr), sd_compat:safe(fun() -> Expr end)).

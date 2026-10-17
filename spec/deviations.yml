@@ -545,3 +545,23 @@
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}
+
+# ---- upstream drift (stock OTP 20 parent -> stock OTP 29.1.2), not port errors ----
+
+- id: UD1
+  layers: [stock20, stock29]
+  source: L5 free-node corpus free-corpus-v1 recorded on both stocks (same harness semantics), 2026-10-17
+  summary: >-
+    19/20 sequences identical. The one difference: after erlang:disconnect_node
+    between n6 and n9, OTP 29's global (prevent_overlapping_partitions, OTP 25
+    OTP-17911, default on) also disconnects n6 and n9 from the other nodes, and
+    the name tables follow. OTP 20 keeps everyone else connected to both.
+  consequence: >-
+    An OTP 29 port's L5 run is compared against STOCK 29.1.2, not 19.3. This
+    entry is the baseline difference a port is expected to show against 19.3 on
+    free nodes. It is also live evidence for decision D-5: the mechanism actively
+    tears down links when a peer reports a lost connection, which overlapping
+    s_groups would trigger by design.
+  fidelity_target: stock29
+  port_policy: must_match_stock29
+  normalization: L5 for ports uses stock 29.1.2 as reference
