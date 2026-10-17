@@ -78,10 +78,14 @@ trace_replay(File, Tries) ->
         {quiescence_failed, K, Call, Lag} ->
             Traces = [{N, rpc:call(N, gen_server, call, [global_name_server, high_level_trace_get, infinity])} || N <- Sut],
             States = [{N, rpc:call(N, sys, get_state, [global_name_server, 5000])} || N <- Sut],
+            %% Q4: what is each lagging node's locker doing (stack, queued messages)?
+            Lockers = [{N, rpc:call(N, erlang, apply, [fun locker_info/0, []], 5000)}
+                       || {N, _, Ms} <- Lag, length(Ms) >= 2],
             ok = file:write_file("/pbt/out/q1-trace.bin",
                                  term_to_binary(#{step => K, call => Call, lagging => Lag,
                                                   traces => Traces, states => States,
-                                                  states_before => get(before_states)})),
+                                                  states_before => get(before_states),
+                                                  lockers => Lockers})),
             io:format("captured Q1 at step ~p ~P; lagging ~p~n",
                       [K, Call, 8, [{Nd, length(Ms)} || {Nd, _, Ms} <- Lag]]),
             ok
@@ -103,3 +107,12 @@ run_calls([{call, sd_pbt_statem, F, Args} = Call | Rest], M, Maps, K) ->
             end;
         _ -> {conformance_failed, K}
     end.
+
+%% Runs on a SUT node: the global locker is the pid field of
+%% global_name_server's state whose current function is loop_the_locker or
+%% one of its receives.
+locker_info() ->
+    St = sys:get_state(global_name_server, 2000),
+    Pids = [P || P <- tuple_to_list(St), is_pid(P), is_process_alive(P)],
+    [erlang:process_info(P, [current_function, current_stacktrace, message_queue_len, messages])
+     || P <- Pids].

@@ -489,9 +489,20 @@
     initiator, and unconnected members with a hidden initiator (4-member group, 1
     hidden): 0/15 stuck. The captured case has 9 members incl. BOTH hidden nodes.
   relation: >-
-    Revives the retracted H1 suspicion (hidden initiator). Possibly a sync with a
-    hidden peer blocks the locker. Next: capture locker state (his_the_locker /
-    nodeup waits) on n1 during the stuck window.
+    Revives the retracted H1 suspicion (hidden initiator).
+  locker_evidence: >-
+    Second capture (fixed4): ALL 9 members know nobody in g3; every locker is
+    idle in loop_the_locker's main receive (global.erl ~2269) with an empty
+    queue; no locks are held. So no locker is blocked waiting for a nodeup (the
+    60 s wait hypothesis is refuted for this case). The first capture showed
+    syncs started (new_resolver) but never completed.
+  open_hypothesis: >-
+    Ordering race on global_name_server's inbox. nodeup (from net_kernel) and
+    own_s_group_update (from s_group) come from different senders, so their
+    order is not guaranteed; a sync started before the membership arrived is
+    abandoned and never retried. Test: interpose a delay on own_s_group_update
+    (experimental patch) and measure; or trace global_name_server's message
+    order on a member.
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}
