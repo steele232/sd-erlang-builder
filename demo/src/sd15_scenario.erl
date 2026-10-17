@@ -99,7 +99,7 @@ step_names_converged(#{groups := Groups}) ->
              {control, router_a}, {control, router_b}],
     [await(io_lib:format("~p ~p known on all of ~p", [Name, G, G]),
            fun() ->
-                   Pids = [rpc:call(N, global, whereis_name, [G, Name])
+                   Pids = [rpc:call(N, s_group, whereis_name, [G, Name])
                            || N <- proplists:get_value(G, Groups)],
                    length(lists:usort(Pids)) =:= 1 andalso is_pid(hd(Pids))
            end)

@@ -5,5 +5,5 @@ FROM ${BASE_IMAGE}
 COPY port/sdx /opt/sdx
 RUN mkdir -p /opt/sdx/ebin && erlc -Werror -o /opt/sdx/ebin /opt/sdx/src/*.erl
 # Every SUT node: no transitive global mesh, s_group library started at boot.
-ENV SD_PBT_NODE_ARGS="-kernel connect_all false -pa /opt/sdx/ebin -eval {ok,_}=s_group:start()."
+ENV SD_PBT_NODE_ARGS="-kernel connect_all false -pa /opt/sdx/ebin -s s_group start"
 RUN mkdir -p /opt/sd-erlang && echo "sdx-prototype on $(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]),halt().')" > /opt/sd-erlang/SD_SOURCE_SHA

@@ -23,7 +23,7 @@ boot_registration() ->
           fun() ->
                   [N || N <- All, net_adm:ping(N) =/= pong] =:= [] andalso
                       lists:all(fun({G, Name}) ->
-                                        lists:any(fun(N) -> is_pid(rpc:call(N, global, whereis_name, [G, Name])) end,
+                                        lists:any(fun(N) -> is_pid(rpc:call(N, s_group, whereis_name, [G, Name])) end,
                                                   Members(G))
                                 end, Names)
           end, 60000),
@@ -31,7 +31,7 @@ boot_registration() ->
     Missing = [{G, Name, Ns}
                || {G, Name} <- Names,
                   Ns <- [[N || N <- Members(G),
-                               not is_pid(rpc:call(N, global, whereis_name, [G, Name]))]],
+                               not is_pid(rpc:call(N, s_group, whereis_name, [G, Name]))]],
                   Ns =/= []],
     Result = case Missing of
                  [] -> {consistent, ?SETTLE_MS};

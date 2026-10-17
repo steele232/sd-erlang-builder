@@ -26,7 +26,7 @@ register_when_joined(Group, Name, Pid) ->
     s_group:register_name(Group, Name, Pid).
 
 wait_joined(Group, Deadline) ->
-    Missing = (s_group:own_nodes(Group) -- [node()]) -- global:get_known_s_group(Group),
+    Missing = (s_group:own_nodes(Group) -- [node()]) -- known(Group),
     case Missing =:= [] orelse erlang:monotonic_time(millisecond) > Deadline of
         true when Missing =/= [] ->
             io:format("[~s] registering in ~p before joining ~p~n", [node(), Group, Missing]);
@@ -35,4 +35,12 @@ wait_joined(Group, Deadline) ->
         false ->
             timer:sleep(?POLL_MS),
             wait_joined(Group, Deadline)
+    end.
+
+%% Members global on this node has synced with. 19.3 exposes this only as
+%% the internal global:get_known_s_group/1; a port exports s_group:known_peers/1.
+known(Group) ->
+    case erlang:function_exported(s_group, known_peers, 1) of
+        true -> s_group:known_peers(Group);
+        false -> global:get_known_s_group(Group)
     end.

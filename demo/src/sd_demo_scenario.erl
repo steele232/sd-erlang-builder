@@ -154,7 +154,7 @@ step_crash_isolation() ->
     await("gateway sees connector down",
           fun() -> not lists:member(?CONNECTOR, nodes()) end),
     await("gateway's external_ai name table drops the dead worker_pool",
-          fun() -> global:whereis_name(external_ai, worker_pool) =:= undefined end),
+          fun() -> s_group:whereis_name(external_ai, worker_pool) =:= undefined end),
     LocalDuringOutage = round_trip(local_ai, ?GPU1),
     check("gpu1 membership untouched by connector crash",
           [{local_ai, [?GATEWAY, ?GPU1]}], own_groups(?GPU1)),

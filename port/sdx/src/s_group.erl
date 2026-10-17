@@ -10,7 +10,9 @@
 %% including the registered I-behaviours I1, I2, I3, R1, R2. Requirements met by
 %% design: R-ISO-1 (no logical disconnects at all), R-NS-1/2/3/4 (no
 %% global-partition merge; each group's namespace is replicated explicitly
-%% under a group-wide lock), R-ATTR-1 (one attribute store).
+%% under a group-wide lock), R-ATTR-1 (one attribute store). With connect_all
+%% false, S2's transitive meshing of free normal nodes is emulated here
+%% (free_mesh/1).
 -module(s_group).
 -behaviour(gen_server).
 
@@ -22,7 +24,8 @@
          add_attributes/1, registered_attributes/0, choose_nodes/1,
          known_peers/1]).
 %% internal (called on other members)
--export([i_install/3, i_drop/1, i_insert/4, i_delete/3, i_lookup/2, i_names/1]).
+-export([i_install/3, i_drop/1, i_insert/4, i_delete/3, i_lookup/2, i_names/1,
+         i_is_free/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(T, 15000).
@@ -213,6 +216,7 @@ i_insert(G, Name, Pid, Mode) -> gen_server:call(?MODULE, {insert, G, Name, Pid, 
 i_delete(G, Name, Pid) -> gen_server:call(?MODULE, {delete, G, Name, Pid}).
 i_lookup(G, Name) -> maps:get(Name, maps:get(G, all_names(), #{}), undefined).
 i_names(G) -> maps:get(G, all_names(), #{}).
+i_is_free() -> groups() =:= #{} andalso init:get_argument(hidden) =:= error.
 
 groups() -> gen_server:call(?MODULE, groups).
 all_names() -> gen_server:call(?MODULE, names).
@@ -221,7 +225,23 @@ all_names() -> gen_server:call(?MODULE, names).
 %% gen_server
 %%--------------------------------------------------------------------
 
-init([]) -> {ok, #st{}}.
+%% Static configuration (D3.3 3.1 launch config, as in 19.3):
+%% {kernel, [{s_groups, [{G, normal, Nodes}]}]}. Same-name definitions are
+%% merged by union, as 19.3 does (DN1, decision D-3 still open).
+init([]) ->
+    Groups = case application:get_env(kernel, s_groups) of
+                 {ok, Defs} when is_list(Defs) ->
+                     Merged = lists:foldl(fun({G, _Type, Ns}, Acc) ->
+                                                  maps:update_with(G, fun(Old) -> lists:usort(Old ++ Ns) end,
+                                                                   lists:usort(Ns), Acc)
+                                          end, #{}, Defs),
+                     maps:filter(fun(_G, Ns) -> lists:member(node(), Ns) end, Merged);
+                 _ -> #{}
+             end,
+    Peers = lists:usort(lists:append(maps:values(Groups))) -- [node()],
+    ok = net_kernel:monitor_nodes(true),
+    _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Peers] end),
+    {ok, #st{groups = Groups, names = maps:map(fun(_, _) -> #{} end, Groups)}}.
 
 handle_call(groups, _F, S) -> {reply, S#st.groups, S};
 handle_call(names, _F, S) -> {reply, S#st.names, S};
@@ -229,19 +249,44 @@ handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
 handle_call({add_attributes, As}, _F, S) ->
     {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
 handle_call({install, G, Members, Names}, _F, S) ->
+    %% P2 / D3.3 InterConnectNodes: every member connects to every other
+    %% member (found by L1 on OTP 29: without it only creator<->member links
+    %% existed, since connect_all is false).
+    Others = Members -- [node()],
+    _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Others] end),
     S1 = lists:foldl(fun({Nm, P}, Acc) -> put_name(G, Nm, P, Acc) end,
                      S#st{groups = maps:put(G, Members, S#st.groups),
                           names = maps:put(G, maps:get(G, S#st.names, #{}), S#st.names)},
                      maps:to_list(Names)),
     {reply, ok, S1};
 handle_call({drop, G}, _F, S) ->
-    {reply, ok, S#st{groups = maps:remove(G, S#st.groups), names = maps:remove(G, S#st.names)}};
+    S1 = S#st{groups = maps:remove(G, S#st.groups), names = maps:remove(G, S#st.names)},
+    %% Became free: rejoin the free mesh over the links it already has.
+    case S#st.groups =/= #{} andalso S1#st.groups =:= #{} of
+        true -> free_mesh(nodes(), S1);
+        false -> ok
+    end,
+    {reply, ok, S1};
 handle_call({insert, G, Name, Pid, Mode}, _F, S) ->
     S1 = case Mode of replace -> del_name(G, Name, S); none -> S end,
     {reply, ok, put_name(G, Name, Pid, S1)};
 handle_call({delete, G, Name, _Pid}, _F, S) ->
     {reply, ok, del_name(G, Name, S)}.
 
+handle_cast({merge, G, Names}, S) ->
+    case maps:is_key(G, S#st.groups) of
+        true -> {noreply, lists:foldl(fun({Nm, P}, Acc) -> merge_name(G, Nm, P, Acc) end,
+                                      S, Names)};
+        false -> {noreply, S}
+    end;
+handle_cast({free_peers, From, Peers, Answer}, S) ->
+    case free_normal(S) of
+        true ->
+            _ = spawn(fun() -> [net_kernel:connect_node(P) || P <- Peers -- [node() | nodes()]] end),
+            Answer andalso free_mesh([From], false, S);
+        false -> ok
+    end,
+    {noreply, S};
 handle_cast(_, S) -> {noreply, S}.
 
 %% A registered process died: drop its name on this replica (every member
@@ -251,6 +296,15 @@ handle_info({'DOWN', Ref, process, _, _}, S) ->
         {{G, Name}, Mons} -> {noreply, del_name(G, Name, S#st{mons = Mons})};
         error -> {noreply, S}
     end;
+%% R-NS-1 (merge on join): a member that connects after a registration was
+%% multicast never received it. Each node is authoritative for the names of
+%% its own processes and pushes them, per shared group, to the new peer.
+handle_info({nodeup, N}, S) ->
+    _ = [gen_server:cast({?MODULE, N}, {merge, G, [{Nm, P} || {Nm, P} <- maps:to_list(maps:get(G, S#st.names, #{})),
+                                                     node(P) =:= node()]})
+         || {G, Members} <- maps:to_list(S#st.groups), lists:member(N, Members)],
+    free_mesh([N], S),
+    {noreply, S};
 handle_info(_, S) -> {noreply, S}.
 
 terminate(_, _) -> ok.
@@ -266,6 +320,22 @@ put_name(G, Name, Pid, S) ->
                  mons = maps:put(Ref, {G, Name}, S#st.mons)}
     end.
 
+%% Merge one pushed name. Same name, different pid: both sides keep the
+%% smaller pid (term order), so a pairwise merge is deterministic. A pid
+%% already registered under another name is not added twice (P4).
+merge_name(G, Name, Pid, S) ->
+    Ns = maps:get(G, S#st.names, #{}),
+    case maps:find(Name, Ns) of
+        {ok, Pid} -> S;
+        {ok, Old} when Old < Pid -> S;
+        {ok, _Old} -> put_name(G, Name, Pid, del_name(G, Name, S));
+        error ->
+            case lists:member(Pid, maps:values(Ns)) of
+                true -> S;
+                false -> put_name(G, Name, Pid, S)
+            end
+    end.
+
 del_name(G, Name, S) ->
     Ns = maps:get(G, S#st.names, #{}),
     S#st{names = maps:put(G, maps:remove(Name, Ns), S#st.names)}.
@@ -273,6 +343,30 @@ del_name(G, Name, S) ->
 %%--------------------------------------------------------------------
 %% Helpers
 %%--------------------------------------------------------------------
+
+%% S2 / D3.3 NewFreeNodes: connected free normal nodes share their
+%% connections. Stock global does this transitively only with connect_all
+%% true, which would also mesh s_groups, so it is emulated: a free normal node
+%% tells each free peer in Targets which free nodes it is connected to, and
+%% the peer connects to them (never to a group member). Hidden free nodes
+%% keep their links and mesh with no one.
+free_normal(S) -> S#st.groups =:= #{} andalso init:get_argument(hidden) =:= error.
+
+free_mesh(Targets, S) -> free_mesh(Targets, true, S).
+
+%% Answer: ask each target to reply with its own free peers (once).
+free_mesh(Targets, Answer, S) ->
+    case free_normal(S) of
+        true ->
+            _ = spawn(fun() ->
+                              Free = [M || M <- nodes(),
+                                           rpc:call(M, ?MODULE, i_is_free, [], ?T) =:= true],
+                              [gen_server:cast({?MODULE, T}, {free_peers, node(), Free -- [T], Answer})
+                               || T <- Targets, lists:member(T, Free)]
+                      end),
+            ok;
+        false -> ok
+    end.
 
 with_members(G, NotMember, Fun) ->
     case maps:find(G, groups()) of

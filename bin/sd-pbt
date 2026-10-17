@@ -12,6 +12,7 @@
 #
 # SD_PBT_MODE=quiescent (default) waits for global group knowledge to settle
 # before each command; eager does not (exposes deviation O5).
+# SD_PBT_NODE_ARGS (if set) replaces the runtime image's extra SUT node args.
 # SD_PBT_CONVERGE_MS sets the eventual-equality deadline (default 10000).
 # Reports land in test-results/pbt/. 14 SUT nodes + a hidden driver run in one
 # container on an --internal network.
@@ -72,6 +73,7 @@ podman run --rm --init --network sd-pbt --hostname pbt.sd.lab \
   -e SD_PBT_MODE="${SD_PBT_MODE:-quiescent}" \
   ${SD_DIFF_STABLE_MS:+-e SD_DIFF_STABLE_MS="$SD_DIFF_STABLE_MS"} \
   ${SD_DIFF_SETTLE_CAP_MS:+-e SD_DIFF_SETTLE_CAP_MS="$SD_DIFF_SETTLE_CAP_MS"} \
+  ${SD_PBT_NODE_ARGS:+-e SD_PBT_NODE_ARGS="$SD_PBT_NODE_ARGS"} \
   -v "$OUT:/pbt/out" \
   "$TAG" erl -noshell -hidden -name driver@pbt.sd.lab -pa /pbt/ebin -eval "
     R = (catch $EXPR),

@@ -25,6 +25,7 @@ property, `spec/deviations.yml` says whether a port must reproduce or may fix it
 | P15 | **Duplicate group names:** behave as D3.3 ch. 3 specifies (merge identical, terminate on conflicting own config, ignore conflicting remote) | S7 | `sd_pbt_dupnames` | ⚠️ identical merge ✅; conflicting-with-self merges by union instead of terminating (**DN1**); conflicting remote kept (**DN2**) |
 | P16 | **Name GC on process death:** a dead registered pid disappears from its group's namespace on every member | S4, `global` | demo3 step 10 (`global:whereis_name` drop) | ✅ holds in scenario |
 | P17 | **Attribute selection:** `choose_nodes/1` returns nodes carrying all requested attributes | JPDC'16 §3 | `sd_pbt_attrs` | ❌ **AT1**: `s_group:add_attributes/1` is invisible to `choose_nodes/1` (two separate stores) |
+| P18 | **Stock `global` names on members:** on an s_group node, `global:whereis_name/1` returns `undefined` (the free namespace is not visible), and `global:registered_names/0` works | JPDC'16 §3.1.4 | `sd_pbt_gapi` (`test-results/pbt/p18-*.txt`) | ✅ 19.3 conforms, and refuses `global:register_name/2` on members (**I4**). OTP 29 prototype: ❌ 6/11 differ (members use stock `global`'s free namespace; a library cannot fix this, needs the kernel hook) |
 
 Every property now has at least one oracle. The remaining gap is failure
 semantics in L1 (proposal `spec/proposals/M1-failures.md`).

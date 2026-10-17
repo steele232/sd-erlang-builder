@@ -439,7 +439,25 @@
   port_policy: may_differ        # recommendation: one store, read and written by the s_group API
   normalization: none
 
-- id: U1
+- id: I4
+  layers: [S, I]
+  source: test/pbt/sd_pbt_gapi.erl (P18), test-results/pbt/p18-sd193.txt; 19.3 global.erl register_name/2,3
+  summary: >-
+    On an s_group member, global:register_name/2,3 and re_register_name/2,3
+    return {no, the_node_is_not_free}, and global:send/2 exits badarg. The check
+    reads application env kernel s_groups, which s_group keeps as a mirror of
+    current membership, so it applies to dynamic members as well as static ones,
+    and lifts when the node leaves its last group. A free name the node
+    registered before joining stops resolving on that node. JPDC'16 3.1.4
+    specifies only whereis_name/1 -> undefined on members (19.3 conforms) and is
+    silent on registration.
+  fidelity_target: I
+  port_policy: must_match        # R-API-5
+  normalization: none
+  port_status: >-
+    library prototype (port/sdx) differs on 6/11 probe lines: members still use
+    stock global's free namespace. Needs the kernel hook (design B).
+
   layers: [S, M, I]
   source: SUT error logs from reference campaigns 2026-10-17 (test-results/pbt/crash-evidence-3)
   summary: >-

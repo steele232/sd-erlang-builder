@@ -16,8 +16,11 @@ that checks it.
 | R-API-2 | `add_nodes(G, [Caller])` → `{ok, G, []}` without a membership check; only already-members → echoes the request | I1, I3 | L1 |
 | R-API-3 | `remove_nodes/2` removes the intersection with the members and returns `ok` | I2 | L1 (`sd_pbt_impl`) |
 | R-API-4 | a lookup miss (`whereis_name/2`, `send/3`) searches other groups' nodes | O4 | L1, L2 |
+| R-API-5 | on a group member the stock `global` name API behaves as in 19.3: `register_name/2,3` and `re_register_name/2,3` → `{no, the_node_is_not_free}`, `whereis_name/1` → `undefined` (including names the node registered while it was free), `send/2` exits `badarg`; after leaving its last group the node registers freely again | P18, I4 | `sd_pbt_gapi` (must equal `test-results/pbt/p18-sd193.txt`) |
 | R-TOP-1 | transitive within a group; links between nodes sharing no group are hidden | S3, O2 | demo3, demo15, L2 |
 | R-TOP-2 | `remove_nodes/2` keeps existing links | S5, O1 | demo3, L2 |
+| R-TOP-3 | free normal nodes mesh transitively among themselves (S2, D3.3 NewFreeNodes), including a node that just became free; never with group members, and hidden free nodes mesh with no one. With `connect_all false` (needed to keep groups apart) stock `global` does none of this, so the port must provide it | S2 | L1 (prototype counterexample `test/corpus/l1-sdx-freemesh.eterm`: delete → re-create → `remove_nodes`; 0/10 → 10/10 after `free_mesh/1`) |
+| R-NS-5 | a member that connects after a group registration was multicast still receives it (merge on join); a same-name conflict resolves the same way on both sides | S4, P5 | demo15 `step_scoped_names` (prototype without merge: gpu3 never saw gpu1's `worker_pool`) |
 
 ## Correctness: improve on 19.3 (FIX), each gated by `bin/sd-pbt-ab`
 

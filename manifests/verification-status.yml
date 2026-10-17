@@ -46,3 +46,12 @@ observed_historical_behaviours:
   - group-scoped registration reaches only global's known set at that instant; early registrations can stay missing (s_group:sync/0 does not repair)
   - remove_nodes/2 performs a logical disconnect only; the distribution link may persist
   - pid of a restarted node can compare equal to the pre-crash pid (OTP 20 2-bit creation)
+port_prototype_otp29:
+  runtime: localhost/sd-erlang:29.1.2-sdx-proto (port/sdx, library-only, stock 29.1.2)
+  date: 2026-10-17
+  demo3: 10/10 (SD_DEMO_RUNTIME/SD_DEMO_IMAGE/SD_DEMO_ERL_FLAGS; 19.3 re-checked 10/10 with the same demo sources)
+  demo15: 10/10 (19.3 re-checked 10/10)
+  l1: 100/100 after R-TOP-3 free_mesh; before it, counterexample test/corpus/l1-sdx-freemesh.eterm (0/10 replays; 10/10 with prevent_overlapping_partitions false too, so not UD1)
+  p18: 6/11 lines differ from 19.3 (R-API-5, needs kernel hook)
+  found_by_l3: [R-NS-5 merge on join (demo15), demo harness used 19.3-only global:whereis_name/2 and global:get_known_s_group/1]
+

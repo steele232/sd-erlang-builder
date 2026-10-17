@@ -15,9 +15,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SD_RUNTIME=localhost/sd-erlang:19.3-reference
+# SD_DEMO_RUNTIME overrides the runtime image (e.g. a port candidate);
+# SD_DEMO_ERL_FLAGS is passed to every node as ERL_AFLAGS (processed before
+# the command line, so e.g. `-s s_group start` runs before the app starts);
+# SD_DEMO_IMAGE names the demo image built on that runtime.
+SD_RUNTIME="${SD_DEMO_RUNTIME:-localhost/sd-erlang:19.3-reference}"
 STOCK_RUNTIME=localhost/sd-erlang:19.3-reference-parent-stock
-SD_DEMO=localhost/sd-demo:19.3
+SD_DEMO="${SD_DEMO_IMAGE:-localhost/sd-demo:19.3}"
 STOCK_DEMO=localhost/sd-demo:19.3-parent-stock
 NODES=(core1 core2 core3 gw1 gw2 gpu1 gpu2 gpu3 gpu4 edge1 edge2 edge3 edge4 saas1 saas2)
 SECRET=sd-demo15-cookie
@@ -49,7 +53,7 @@ start_cluster() {  # mode(sd|stock) image [extra erl args]
     podman rm -f "$prefix-$n" >/dev/null 2>&1 || true
     podman run -d --name "$prefix-$n" \
       --hostname "$n.sd.lab" --network "$net" --network-alias "$n.sd.lab" \
-      --restart on-failure \
+      --restart on-failure -e ERL_AFLAGS="${SD_DEMO_ERL_FLAGS:-}" \
       --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
       "$image" \
       erl -noshell -name "$n@$n.sd.lab" -config /demo/config/sd15 -pa /demo/ebin $extra \
