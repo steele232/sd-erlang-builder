@@ -469,8 +469,8 @@
     of a group each registered a different name for the same pid, and the merge
     keeps both. Stock global has the same multi-name merge behaviour for the free
     namespace (?WARN_DUPLICATED_NAME), so this is inherited, but per group.
-  fidelity_target: undecided
-  port_policy: undecided         # deferred by the user 2026-10-17 (needed when the R-NS-1 merge is implemented); stock global keeps both names; M forbids it
+  fidelity_target: M
+  port_policy: may_differ        # U1 decided 2026-10-17 (spec/DECISIONS.md): at merge, keep one name per pid via the resolve method, unregister the rest; P4 holds unconditionally
   normalization: none (log-only; not yet asserted by L1)
 
 - id: Q3
