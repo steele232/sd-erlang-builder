@@ -1,0 +1,136 @@
+--- a/lib/kernel/src/s_group.erl	2026-10-17 10:10:26
++++ b/lib/kernel/src/s_group.erl	2026-10-17 10:10:26
+@@ -960,7 +960,8 @@
+                 end, {[], [], []}, NewNodes),
+             ?debug({"NS_NNC_NSE1:",  {NS, NNC, NSE}}),
+ 
+-	    disconnect_nodes(NodesToDisconnect),
++	    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
++	    _ = NodesToDisconnect,
+ 
+ 	    %% Send s_group info update to the own global_name_server
+ 	    global_name_server ! {own_s_group_update, SGroupName, Nodes},
+@@ -1017,7 +1018,7 @@
+ 	   	            ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+     	   	      	    ?debug({"s_group_handle_new_s_group_check_ConnectedNodes",
+ 		                                                     ConnectedNodes}),
+-			    disconnect_nodes(ConnectedNodes -- [Node]),
++			    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
+                             ConnectedNodes
+                end,
+ 
+@@ -1228,9 +1229,9 @@
+                 NewNodes0 ->
+ 		    ?debug({"add_nodes_Nodes", Nodes}),
+ 		    ?debug({"add_nodes_NewNodes0", NewNodes0}),
+-		    NodesToDisConnect = Nodes -- (Nodes -- nodes(connected)),
++		    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
++		    NodesToDisConnect = [],
+ 		    ?debug({"add_nodes_NodesToDisConnect", NodesToDisConnect}),
+-		    disconnect_nodes(NodesToDisConnect),
+ 
+ 		    NewNodes = s_group_conflict(NewNodes0, [SGroupName]),
+ 
+@@ -1309,7 +1310,7 @@
+     	   ?debug({"add_nodes_check_NoGroupNodes", NoGroupNodes});
+ 	 _ ->
+ 	   ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+-    	   disconnect_nodes(ConnectedNodes -- [Node]),
++    	   %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
+     	   ?debug({"s_group_handle_add_nodes_check_ConnectedNodes", ConnectedNodes})
+     end,
+     
+@@ -1440,11 +1441,16 @@
+     %% Send s_group info update to the own global_name_server
+     global_name_server ! {own_s_group_update, SGroupName, NewSGroupNodes},
+ 
+-    %% Disconnect from NodesToRmv
+-    disconnect_nodes(NodesToRmv),
+-    
+     NewOwnSGroups = lists:keyreplace(SGroupName, 1, S#state.own_grps,
+ 		                     {SGroupName, NewSGroupNodes}),
++
++    %% EXPERIMENTAL FIX (spec/deviations.yml Q2): only disconnect removed
++    %% nodes we no longer share any s_group with, as the initiator's path
++    %% does (NodesKeepConnected). 19.3 disconnected all of NodesToRmv, wiping
++    %% global's knowledge of them in other groups (here and, via
++    %% {disconnect_node, ...}, on the removed node).
++    StillShared = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
++    disconnect_nodes(NodesToRmv -- StillShared),
+     NewNodes0 = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
+     NewNodes = (NewNodes0 -- S#state.no_contact) -- S#state.sync_error,
+     NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
+--- a/lib/kernel/src/global.erl	2026-10-17 08:41:41
++++ b/lib/kernel/src/global.erl	2026-10-17 08:42:19
+@@ -1483,24 +1483,29 @@
+     isknown_nodeup(SGroups, Node, IsKnown1, S).
+ 
+ 
++%% EXPERIMENTAL FIX (Q3): 19.3 renamed the free partition's whole no_group
++%% known/synced list to Group (keyreplace on the no_group key). That imported
++%% non-members (free nodes, and hidden nodes picked up via H2) and, when Group
++%% already had an entry, left two {Group, _} entries so members were lost.
++%% Here: keep only Group's members, merge into Group's entry, drop no_group.
+ replace_no_group(Group, S) ->
+-    ?debug({"replace_no_group_S", S}),
+-    Known = S#state.known,
+-    Synced = S#state.synced,
+-    ?debug({"replace_no_group_Group_Known_Synced", Group, Known, Synced}),
+-    S1 = case lists:keyfind(no_group, 1, Known) of
+-             false ->
+-	         S;
+-             {no_group, KnownNodes} ->
+-		 S#state{known=lists:keyreplace(no_group, 1, Known,
+-			  			{Group, KnownNodes})}
+-         end,
+-    case lists:keyfind(no_group, 1, Synced) of
++    Members = case lists:keyfind(Group, 1, S#state.own_s_groups) of
++                  {Group, Ms} -> Ms;
++                  false -> []
++              end,
++    S#state{known = move_no_group(Group, Members, S#state.known),
++            synced = move_no_group(Group, Members, S#state.synced)}.
++
++move_no_group(Group, Members, L0) ->
++    case lists:keytake(no_group, 1, L0) of
+         false ->
+-	     S1;
+-        {no_group, SyncedNodes} ->
+-	     S1#state{synced=lists:keyreplace(no_group, 1, Synced,
+-	    				      {Group, SyncedNodes})}
++            L0;
++        {value, {no_group, Free}, L1} ->
++            Keep = [N || N <- Free, lists:member(N, Members)],
++            case lists:keyfind(Group, 1, L1) of
++                false -> [{Group, lists:usort(Keep)} | L1];
++                {Group, Old} -> lists:keyreplace(Group, 1, L1, {Group, lists:usort(Old ++ Keep)})
++            end
+     end.
+ 
+ 
+@@ -3056,7 +3061,12 @@
+     exchange_ops_s_known(SGroups, [{SGroup, NewKnown} | Known], S).
+ 
+ 
+-resolved_s(Node, HisCmnSGroups, HisCmnKnown, HisResolved, Names_ext, S0) ->
++%% EXPERIMENTAL FIX (spec/deviations.yml C1): a free peer answers with the
++%% stock {resolved, ...} message, whose known list is flat ([node()]), and it can
++%% reach this s_group path via {save_ops, Node}. 19.3 then crashed in
++%% lists:unzip/1 (global.erl:3080). A flat list means no common s_groups.
++resolved_s(Node, HisCmnSGroups, HisCmnKnown0, HisResolved, Names_ext, S0) ->
++    HisCmnKnown = [GN || {_G, _Ns} = GN <- HisCmnKnown0],
+     %% NC changed Group->HisCmnSGroups,
+     %% Known->CmnKnownNodes, HisKnown->HisCmnKnownNodes,
+     %% CmnKnown::[{SGroupName, Nodes}], HisCmnKnown::[{SGroupName, Nodes}].
+@@ -3077,7 +3087,10 @@
+                [] ->
+ 	          [];
+ 	       _ ->
+-	          {_SGroups, HisCmnKnownNodes1} = lists:unzip(HisCmnKnown),
++	          %% EXPERIMENTAL FIX (C1b): 19.3 reused the bound variable _SGroups
++	          %% here, so this matched the peer's group list against ours and
++	          %% crashed (badmatch) whenever order or content differed.
++	          {_HisSGroups, HisCmnKnownNodes1} = lists:unzip(HisCmnKnown),
+     		  lists:usort(lists:append(HisCmnKnownNodes1))
+            end,
+ 

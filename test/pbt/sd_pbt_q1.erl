@@ -148,6 +148,12 @@ msg_tracer_start() ->
                       %% Q4: also s_group's receives, to see whether a synthetic
                       %% {nodeup, Peer} overtakes {disconnect_node, Peer}.
                       erlang:trace(Sg, true, ['receive']),
+                      %% Q4: decisions between nodeup_s and lock_is_set.
+                      erlang:trace(Gns, true, [call]),
+                      Ret = [{'_', [], [{return_trace}]}],
+                      _ = erlang:trace_pattern({global, handle_node_up_s, '_'}, Ret, [local]),
+                      _ = erlang:trace_pattern({global, isknown_nodeup, '_'}, Ret, [local]),
+                      _ = erlang:trace_pattern({global, cancel_locker, '_'}, true, [local]),
                       msg_loop(T0, [])
               end),
     register(sd_q1_msg_tracer, P),
@@ -161,6 +167,14 @@ msg_loop(T0, Acc) ->
     receive
         {dump, From} ->
             From ! {msg_dump, lists:reverse(Acc)},
+            msg_loop(T0, Acc);
+        {trace, _, call, {global, F, Args}} ->
+            T = erlang:monotonic_time(millisecond) - T0,
+            msg_loop(T0, lists:sublist([{T, {call, F, call_peer(F, Args)}} | Acc], 2000));
+        {trace, _, return_from, {global, F, _Ar}, R} when F =/= handle_node_up_s ->
+            T = erlang:monotonic_time(millisecond) - T0,
+            msg_loop(T0, lists:sublist([{T, {return, F, R}} | Acc], 2000));
+        {trace, _, return_from, _, _} ->
             msg_loop(T0, Acc);
         {trace, Who, 'receive', Msg} ->
             T = erlang:monotonic_time(millisecond) - T0,
@@ -211,3 +225,12 @@ peer_of(Cast) ->
     end.
 
 sd_pbt_impl_model() -> get(last_model).
+
+call_peer(isknown_nodeup, [Groups, Node | _]) -> {Node, Groups};
+call_peer(cancel_locker, [Node | _]) -> Node;
+call_peer(handle_node_up_s, Args) ->
+    case [A || A <- Args, is_atom(A), lists:member($@, atom_to_list(A))] of
+        [N | _] -> N;
+        [] -> none
+    end;
+call_peer(_, _) -> none.

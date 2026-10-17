@@ -520,11 +520,24 @@
     ONE sync reached lock_is_set/exchange. Together with shape (a)'s new_resolver
     without completion: syncs are started and then abandoned before the lock
     phase.
-  next_step: >-
-    Instrument the window between nodeup_s and lock_is_set: handle_node_up_s /
-    isknown_nodeup decisions, the locker's add_node/cancel calls, and whether a
-    logical {nodedown, Peer} arriving after nodeup_s cancels the started sync
-    (cancel_locker) without a later nodeup to restart it.
+  mechanism_shape_b: >-
+    Call-traced (handle_node_up_s / isknown_nodeup / cancel_locker on
+    global_name_server). Each peer's nodeup_s arrives TWICE (real + synthetic
+    from connect_s_group_nodes). The first starts a sync session (tag,
+    init_connect, resolver); the second is ignored because isknown_nodeup counts
+    resolvers (the 19.3 comment says "only for double nodeups (shouldn't
+    occur!)"). Then logical nodedowns arrive from OTHER members'
+    new_s_group_check, which logically disconnects every other already-connected
+    new member (no shared group exists here, so 0005/0006 do not apply). They
+    cancel the session, both nodeups are consumed, and nothing restarts it. This
+    is why reordering only our own sends (0008) had no effect.
+  experimental_fix: >-
+    0009: no logical disconnect of already-connected members on the
+    s_group-member join paths (initiator, new_s_group_check, add_nodes,
+    add_nodes_check). Synthetic nodeups still start group syncs, since
+    isknown_nodeup checks group knowledge, and 0007 moves free knowledge safely.
+    Trigger replay: 9/10 pass (vs ~5/18 failing on fixed4/fixed5). 20-replay
+    comparison and A/B pending. One residual failure: shape (a)?
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}

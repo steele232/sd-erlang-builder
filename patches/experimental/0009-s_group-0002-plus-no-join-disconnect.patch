@@ -1,0 +1,62 @@
+--- a/lib/kernel/src/s_group.erl	2026-10-17 10:10:26
++++ b/lib/kernel/src/s_group.erl	2026-10-17 10:10:26
+@@ -960,7 +960,8 @@
+                 end, {[], [], []}, NewNodes),
+             ?debug({"NS_NNC_NSE1:",  {NS, NNC, NSE}}),
+ 
+-	    disconnect_nodes(NodesToDisconnect),
++	    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
++	    _ = NodesToDisconnect,
+ 
+ 	    %% Send s_group info update to the own global_name_server
+ 	    global_name_server ! {own_s_group_update, SGroupName, Nodes},
+@@ -1017,7 +1018,7 @@
+ 	   	            ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+     	   	      	    ?debug({"s_group_handle_new_s_group_check_ConnectedNodes",
+ 		                                                     ConnectedNodes}),
+-			    disconnect_nodes(ConnectedNodes -- [Node]),
++			    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
+                             ConnectedNodes
+                end,
+ 
+@@ -1228,9 +1229,9 @@
+                 NewNodes0 ->
+ 		    ?debug({"add_nodes_Nodes", Nodes}),
+ 		    ?debug({"add_nodes_NewNodes0", NewNodes0}),
+-		    NodesToDisConnect = Nodes -- (Nodes -- nodes(connected)),
++		    %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
++		    NodesToDisConnect = [],
+ 		    ?debug({"add_nodes_NodesToDisConnect", NodesToDisConnect}),
+-		    disconnect_nodes(NodesToDisConnect),
+ 
+ 		    NewNodes = s_group_conflict(NewNodes0, [SGroupName]),
+ 
+@@ -1309,7 +1310,7 @@
+     	   ?debug({"add_nodes_check_NoGroupNodes", NoGroupNodes});
+ 	 _ ->
+ 	   ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+-    	   disconnect_nodes(ConnectedNodes -- [Node]),
++    	   %% EXPERIMENTAL FIX (Q4, 0009): no logical disconnect of already-connected members on join; it cancels sync sessions other members just started, and no nodeup restarts them
+     	   ?debug({"s_group_handle_add_nodes_check_ConnectedNodes", ConnectedNodes})
+     end,
+     
+@@ -1440,11 +1441,16 @@
+     %% Send s_group info update to the own global_name_server
+     global_name_server ! {own_s_group_update, SGroupName, NewSGroupNodes},
+ 
+-    %% Disconnect from NodesToRmv
+-    disconnect_nodes(NodesToRmv),
+-    
+     NewOwnSGroups = lists:keyreplace(SGroupName, 1, S#state.own_grps,
+ 		                     {SGroupName, NewSGroupNodes}),
++
++    %% EXPERIMENTAL FIX (spec/deviations.yml Q2): only disconnect removed
++    %% nodes we no longer share any s_group with, as the initiator's path
++    %% does (NodesKeepConnected). 19.3 disconnected all of NodesToRmv, wiping
++    %% global's knowledge of them in other groups (here and, via
++    %% {disconnect_node, ...}, on the removed node).
++    StillShared = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
++    disconnect_nodes(NodesToRmv -- StillShared),
+     NewNodes0 = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
+     NewNodes = (NewNodes0 -- S#state.no_contact) -- S#state.sync_error,
+     NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
