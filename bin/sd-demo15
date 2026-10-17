@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# 15-node s_group demo on historical SD Erlang 19.3 (podman).
+#
+#   bin/sd-demo15 up          build demo image, start the 15 nodes
+#   bin/sd-demo15 scenario    run sd15_scenario:run/0 from a hidden driver node
+#   bin/sd-demo15 status      per-node groups and visible links
+#   bin/sd-demo15 shell NODE  hidden remote shell into a node (e.g. gw1)
+#   bin/sd-demo15 control     same 15 nodes + seeds on stock OTP (full mesh)
+#   bin/sd-demo15 repro [N]   N fresh boots with register-at-boot; report name divergence
+#   bin/sd-demo15 down        stop everything
+#   bin/sd-demo15 all         up + scenario + control  (default)
+#
+# Topology, seeds and services: demo/config/sd15.config (single source).
+# Same isolation as bin/sd-demo: --internal network, per-run cookie secret.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SD_RUNTIME=localhost/sd-erlang:19.3-reference
+STOCK_RUNTIME=localhost/sd-erlang:19.3-reference-parent-stock
+SD_DEMO=localhost/sd-demo:19.3
+STOCK_DEMO=localhost/sd-demo:19.3-parent-stock
+NODES=(core1 core2 core3 gw1 gw2 gpu1 gpu2 gpu3 gpu4 edge1 edge2 edge3 edge4 saas1 saas2)
+SECRET=sd-demo15-cookie
+
+network_for() { [ "$1" = sd ] && echo sd-lab15 || echo sd-lab15-control; }
+prefix_for()  { [ "$1" = sd ] && echo sd15 || echo sd15ctl; }
+
+build_demo_image() {  # runtime-tag demo-tag
+  local runtime_id
+  runtime_id="$(podman image inspect "$1" --format '{{.Id}}')"
+  podman build --quiet --build-arg RUNTIME_IMAGE="$runtime_id" \
+    -f "$ROOT/containers/demo/Containerfile" -t "$2" "$ROOT" >/dev/null
+  echo "demo image $2 on runtime $runtime_id"
+}
+
+ensure_secret() {
+  if ! podman secret exists "$SECRET"; then
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F' \
+      | podman secret create "$SECRET" - >/dev/null
+  fi
+}
+
+start_cluster() {  # mode(sd|stock) image [extra erl args]
+  local mode="$1" image="$2" extra="${3:-}" net prefix n
+  net="$(network_for "$mode")"; prefix="$(prefix_for "$mode")"
+  ensure_secret
+  podman network exists "$net" || podman network create --internal "$net" >/dev/null
+  for n in "${NODES[@]}"; do
+    podman rm -f "$prefix-$n" >/dev/null 2>&1 || true
+    podman run -d --name "$prefix-$n" \
+      --hostname "$n.sd.lab" --network "$net" --network-alias "$n.sd.lab" \
+      --restart on-failure \
+      --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+      "$image" \
+      erl -noshell -name "$n@$n.sd.lab" -config /demo/config/sd15 -pa /demo/ebin $extra \
+          -eval "ok = application:start(sd_demo)" >/dev/null
+  done
+  echo "started ${#NODES[@]} nodes (${prefix}-*) on $net"
+}
+
+# A short-lived hidden driver node: not an s_group member, invisible in nodes().
+driver() {  # mode image expr
+  local net
+  net="$(network_for "$1")"
+  podman run --rm --network "$net" --hostname driver.sd.lab --network-alias driver.sd.lab \
+    --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+    "$2" erl -noshell -hidden -name "driver$$@driver.sd.lab" -pa /demo/ebin -eval "
+      case catch ($3) of
+          ok -> halt(0);
+          Other -> io:format(\"~p~n\", [Other]), halt(1)
+      end."
+}
+
+cmd_up() {
+  build_demo_image "$SD_RUNTIME" "$SD_DEMO"
+  start_cluster sd "$SD_DEMO"
+}
+
+cmd_scenario() { driver sd "$SD_DEMO" "sd15_scenario:run()"; }
+
+cmd_status() {
+  driver sd "$SD_DEMO" "begin
+      Ns = [list_to_atom(S ++ \"@\" ++ S ++ \".sd.lab\") || S <- string:tokens(\"${NODES[*]}\", \" \")],
+      [net_adm:ping(N) || N <- Ns],
+      [io:format(\"~-22s groups=~w~n~22s links=~w~n\",
+                 [N, [G || {G, _} <- rpc:call(N, s_group, own_s_groups, [])], \"\",
+                  [list_to_atom(hd(string:tokens(atom_to_list(L), \"@\"))) || L <- lists:sort(rpc:call(N, erlang, nodes, []))]])
+       || N <- Ns],
+      ok end"
+}
+
+cmd_shell() {
+  local n="${1:?usage: sd-demo15 shell NODE}"
+  exec podman exec -it "sd15-$n" erl -hidden -name "shell$$@$n.sd.lab" -remsh "$n@$n.sd.lab"
+}
+
+cmd_control() {
+  if ! podman image exists "$STOCK_RUNTIME"; then
+    "$ROOT/bin/sd-build-historical" --stock-control
+  fi
+  build_demo_image "$STOCK_RUNTIME" "$STOCK_DEMO"
+  start_cluster stock "$STOCK_DEMO"
+  local rc=0
+  driver stock "$STOCK_DEMO" "sd15_scenario:control()" || rc=$?
+  for n in "${NODES[@]}"; do podman rm -f "sd15ctl-$n" >/dev/null; done
+  podman network rm sd-lab15-control >/dev/null 2>&1 || true
+  return $rc
+}
+
+cmd_repro() {
+  local runs="${1:-3}" i diverged=0
+  build_demo_image "$SD_RUNTIME" "$SD_DEMO"
+  mkdir -p "$ROOT/demo/_run"
+  for i in $(seq 1 "$runs"); do
+    cmd_down >/dev/null
+    start_cluster sd "$SD_DEMO" "-sd_demo registration boot" >/dev/null
+    echo "== boot $i/$runs"
+    if driver sd "$SD_DEMO" \
+         "case sd15_repro:boot_registration() of {consistent, _} -> ok; R -> R end" \
+         | tee "$ROOT/demo/_run/repro-$i.log" | grep -E 'boot-registration result'; then
+      grep -q '{consistent' "$ROOT/demo/_run/repro-$i.log" || diverged=$((diverged + 1))
+    else
+      diverged=$((diverged + 1))
+    fi
+  done
+  cmd_down >/dev/null
+  echo "boot-registration divergence: $diverged/$runs fresh boots"
+}
+
+cmd_down() {
+  for n in "${NODES[@]}"; do
+    podman rm -f "sd15-$n" "sd15ctl-$n" >/dev/null 2>&1 || true
+  done
+  podman network rm sd-lab15 sd-lab15-control >/dev/null 2>&1 || true
+  podman secret rm "$SECRET" >/dev/null 2>&1 || true
+  echo "15-node demo stopped"
+}
+
+case "${1:-all}" in
+  up)       cmd_up ;;
+  scenario) cmd_scenario ;;
+  status)   cmd_status ;;
+  shell)    shift; cmd_shell "$@" ;;
+  control)  cmd_control ;;
+  repro)    shift; cmd_repro "$@" ;;
+  down)     cmd_down ;;
+  all)      cmd_up; cmd_scenario; echo; echo "--- stock OTP control ---"; cmd_control ;;
+  *)        sed -n '2,12p' "$0"; exit 64 ;;
+esac

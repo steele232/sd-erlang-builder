@@ -68,6 +68,35 @@ which is the behavior s_groups remove. Observed result: SD `gpu1` sees
 `['gateway@gateway.sd.lab']` during the whole safety window. Stock `gpu1` sees
 `[gateway, connector]` about 200 ms after the gateway connects to both.
 
+## The 15-node demo
+
+```bash
+bin/sd-demo15             # 15 nodes + scenario (10 checks) + stock-OTP control
+bin/sd-demo15 status      # per-node groups and visible links
+bin/sd-demo15 repro 3     # reproduce the 19.3 boot-registration name divergence
+```
+
+Four overlapping groups, two gateways (`demo/config/sd15.config` is the single
+source for groups, discovery seeds and services):
+
+| group | members |
+|---|---|
+| `control` | core1 core2 core3 gw1 gw2 |
+| `local_ai` | gw1 gpu1 gpu2 gpu3 gpu4 |
+| `edge_ai` | gw2 edge1 edge2 edge3 edge4 |
+| `external_ai` | gw1 gw2 saas1 saas2 |
+
+Nodes ping only gateway seeds they share a group with (14 links). SD `global`
+builds the other 21 intra-group links itself, for **35 visible links, against 105
+for stock OTP on the same seeds**. No node has more than 10. The scenario runs
+from a hidden driver node and checks:
+- static membership
+- intra-group meshing, and no visible cross-group link
+- group-scoped names, including name convergence on every member
+- client → gateway router → worker routing, with no new links
+- crashing a member and crashing a gateway: isolation, then recovery
+- moving `edge4` between groups
+
 ## Provenance
 
 | What | Where |
@@ -100,6 +129,18 @@ Notable findings:
 * **Runtime finding:** a restarted node can hand out a pid that compares *equal*
   to the old one. OTP 20's 2-bit node creation restarts at 1 under a fresh epmd.
   So the demo detects restarts by node uptime, not by comparing pids.
+* **Runtime finding:** an explicit connection between nodes that share no group
+  succeeds, but it is **hidden**: not in `nodes()`, no shared namespace. Links
+  created this way stay hidden even after the nodes later share a group.
+  `add_nodes/2` itself creates one, because it RPCs the new member first.
+* **Runtime finding:** a name lookup that misses locally (`whereis_name/2`,
+  `send/3`) searches one member of each *other* group, which leaves hidden links behind.
+* **Runtime defect:** a group-scoped name is multicast only to
+  `global:get_known_s_group/1` at registration time, and later syncs don't
+  reliably back-fill it. When services register at boot, `control` names are
+  permanently missing on some members in 3/3 fresh boots (`bin/sd-demo15 repro`).
+  `s_group:sync/0` doesn't repair it. The demo services wait until `global` knows
+  the whole group before registering (`sd_demo_registrar`).
 * Percept2 is left out of the build: it is RELEASE profiling tooling, not part of
   s_group.
 

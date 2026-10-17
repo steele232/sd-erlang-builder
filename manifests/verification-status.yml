@@ -28,6 +28,14 @@ last_local_run:
   host: macOS arm64, podman 5.7.0 (applehv VM), builder trusty arm64v8
   sd_scenario: 10/10 pass
   stock_control: 2/2 pass (gpu1 meshed to connector transitively in ~200 ms)
+demo15:
+  sd_scenario: 10/10 pass on 3 consecutive fresh clusters
+  stock_control: 105 visible links vs 35 under SD (same seeds)
+  boot_registration_repro: diverged on 3/3 fresh boots (control group only)
 observed_historical_behaviours:
+  - connections between nodes sharing no group are allowed but hidden; they stay hidden after a later join
+  - add_nodes/2 creates such a hidden link to the added node
+  - a local name-lookup miss searches other groups and leaves hidden links
+  - group-scoped registration reaches only global's known set at that instant; early registrations can stay missing (s_group:sync/0 does not repair)
   - remove_nodes/2 performs a logical disconnect only; the distribution link may persist
   - pid of a restarted node can compare equal to the pre-crash pid (OTP 20 2-bit creation)

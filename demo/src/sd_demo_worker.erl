@@ -11,10 +11,7 @@ start_link(Group) ->
     gen_server:start_link(?MODULE, Group, []).
 
 init(Group) ->
-    %% Group-scoped registration: the same name may exist in other s_groups.
-    yes = s_group:register_name(Group, worker_pool, self()),
-    io:format("[~s] worker_pool registered in s_group ~p as ~p~n",
-              [node(), Group, self()]),
+    self() ! register,
     {ok, Group}.
 
 handle_call(_Req, _From, Group) ->
@@ -23,6 +20,12 @@ handle_call(_Req, _From, Group) ->
 handle_cast(_Msg, Group) ->
     {noreply, Group}.
 
+%% Group-scoped registration: the same name may exist in other s_groups.
+handle_info(register, Group) ->
+    yes = sd_demo_registrar:register_when_joined(Group, worker_pool, self()),
+    io:format("[~s] worker_pool registered in s_group ~p as ~p~n",
+              [node(), Group, self()]),
+    {noreply, Group};
 %% s_group:send/3,4 delivers a plain message to the resolved pid.
 handle_info({run, JobId, ReplyTo}, Group) ->
     ReplyTo ! {job_done, JobId, node(), Group},

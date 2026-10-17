@@ -13,12 +13,13 @@
 
 -export([run/0, control/0]).
 
+-import(sd_demo_check, [run_steps/1, report/1, check/3, await/2, await/3,
+                        never/2, own_groups/1]).
+
 -define(GATEWAY,   'gateway@gateway.sd.lab').
 -define(GPU1,      'gpu1@gpu1.sd.lab').
 -define(CONNECTOR, 'connector@connector.sd.lab').
 
--define(CONVERGE_MS, 15000).
--define(SAFETY_MS, 3000).
 -define(RESTART_MS, 60000).
 
 %%--------------------------------------------------------------------
@@ -191,47 +192,8 @@ control() ->
     report(run_steps(Steps)).
 
 %%--------------------------------------------------------------------
-%% Helpers
+%% Helpers (generic ones live in sd_demo_check)
 %%--------------------------------------------------------------------
-
-run_steps(Steps) ->
-    lists:map(
-      fun({Name, Fun}) ->
-              io:format("~n== ~s~n", [Name]),
-              T0 = erlang:monotonic_time(millisecond),
-              Result = try Fun() of
-                           {ok, Info} -> {pass, Info}
-                       catch
-                           Class:Reason ->
-                               {fail, {Class, Reason, erlang:get_stacktrace()}}
-                       end,
-              Ms = erlang:monotonic_time(millisecond) - T0,
-              case Result of
-                  {pass, Inf} ->
-                      [io:format("   ~p~n", [I]) || I <- Inf],
-                      io:format("   PASS (~p ms)~n", [Ms]);
-                  {fail, Why} ->
-                      io:format("   FAIL (~p ms): ~p~n", [Ms, Why])
-              end,
-              {Name, element(1, Result)}
-      end, Steps).
-
-report(Results) ->
-    Failed = [N || {N, fail} <- Results],
-    io:format("~nSCENARIO RESULT: ~p/~p passed~n",
-              [length(Results) - length(Failed), length(Results)]),
-    case Failed of
-        [] -> ok;
-        _ -> {error, Failed}
-    end.
-
-own_groups(Node) ->
-    case rpc:call(Node, s_group, own_s_groups, []) of
-        Groups when is_list(Groups) ->
-            lists:sort([{G, lists:sort(Ns)} || {G, Ns} <- Groups]);
-        Other ->
-            Other
-    end.
 
 await_pid_on(Group, Node) ->
     await(io_lib:format("~p worker_pool on ~s", [Group, Node]),
@@ -250,45 +212,4 @@ round_trip(Group, ExpectNode) ->
         {job_done, JobId, ExpectNode, Group} -> {Group, job_done_on, ExpectNode}
     after 5000 ->
             erlang:error({no_reply_from, Group, ExpectNode})
-    end.
-
-check(Desc, Want, Got) ->
-    case Want =:= Got of
-        true -> ok;
-        false -> erlang:error({check_failed, lists:flatten(Desc), {want, Want}, {got, Got}})
-    end.
-
-%% Eventual liveness: Fun must return true or {true, V} before the deadline.
-await(Desc, Fun) ->
-    await(Desc, Fun, ?CONVERGE_MS).
-
-await(Desc, Fun, TimeoutMs) ->
-    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
-    await_loop(lists:flatten(Desc), Fun, Deadline).
-
-await_loop(Desc, Fun, Deadline) ->
-    case catch Fun() of
-        true -> true;
-        {true, V} -> V;
-        _ ->
-            case erlang:monotonic_time(millisecond) > Deadline of
-                true -> erlang:error({did_not_converge, Desc});
-                false -> timer:sleep(100), await_loop(Desc, Fun, Deadline)
-            end
-    end.
-
-%% Immediate safety: Fun must stay false for the whole observation window.
-never(Desc, Fun) ->
-    Deadline = erlang:monotonic_time(millisecond) + ?SAFETY_MS,
-    never_loop(lists:flatten(Desc), Fun, Deadline).
-
-never_loop(Desc, Fun, Deadline) ->
-    case Fun() of
-        false ->
-            case erlang:monotonic_time(millisecond) > Deadline of
-                true -> ok;
-                false -> timer:sleep(100), never_loop(Desc, Fun, Deadline)
-            end;
-        Other ->
-            erlang:error({safety_violation, Desc, Other})
     end.

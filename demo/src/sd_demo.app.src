@@ -1,9 +1,13 @@
 {application, sd_demo,
- [{description, "Tiny SD Erlang s_group demo: one gateway, two worker groups"},
+ [{description, "SD Erlang s_group demos (3-node and 15-node)"},
   {vsn, "0.1.0"},
-  {registered, [sd_demo_sup]},
+  {registered, [sd_demo_sup, sd_demo_seeder]},
   {applications, [kernel, stdlib]},
   {mod, {sd_demo_app, []}},
-  %% role: gateway | worker.  A worker registers `worker_pool` in `group`.
-  {env, [{role, gateway}, {group, undefined}]},
-  {modules, [sd_demo_app, sd_demo_sup, sd_demo_worker, sd_demo_scenario]}]}.
+  %% 3-node demo: role (gateway | worker) and group, set on the command line.
+  %% 15-node demo: {topology, [{Node, [{seeds, _}, {services, _}]}]} from config.
+  %% registration: joined (default) | boot -- see sd_demo_registrar.
+  {env, [{registration, joined}]},
+  {modules, [sd_demo_app, sd_demo_sup, sd_demo_worker, sd_demo_seeder,
+             sd_demo_router, sd_demo_registrar, sd_demo_client, sd_demo_check, sd_demo_scenario,
+             sd15_scenario, sd15_repro]}]}.
