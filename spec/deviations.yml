@@ -474,3 +474,24 @@
   fidelity_target: S
   port_policy: may_differ        # port: per-group knowledge must never be derived from free-partition knowledge
   normalization: none
+
+- id: Q4
+  layers: [S, M, I]
+  source: trace_replay on 19.3-exp-fixed4 (pbt-20261017T153218Z-fail.eterm, step 3)
+  summary: >-
+    OPEN. After new_s_group(g3, [h1,h2,n12,n1,n2,n4,n6,n8,n9]) called by HIDDEN
+    node h2, member n1 receives nodeup from every peer and starts a resolver for
+    each (new_resolver events), but no sync ever completes (no 'added'): n1's
+    known(g3) stays empty while global's own_s_groups on n1 includes g3. The
+    other members don't know n1.
+  negative_results: >-
+    test/pbt/sd_pbt_q4.erl: pre-connected members with normal or hidden
+    initiator, and unconnected members with a hidden initiator (4-member group, 1
+    hidden): 0/15 stuck. The captured case has 9 members incl. BOTH hidden nodes.
+  relation: >-
+    Revives the retracted H1 suspicion (hidden initiator). Possibly a sync with a
+    hidden peer blocks the locker. Next: capture locker state (his_the_locker /
+    nodeup waits) on n1 during the stuck window.
+  fidelity_target: S
+  port_policy: may_differ
+  normalization: failure kind {not_quiescent, new_s_group}
