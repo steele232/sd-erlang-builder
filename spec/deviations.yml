@@ -451,3 +451,26 @@
   fidelity_target: undecided
   port_policy: undecided         # stock global keeps both names; M forbids it
   normalization: none (log-only; not yet asserted by L1)
+
+- id: Q3
+  layers: [S, M, I]
+  source: trace_replay on 19.3-exp-fixed3 (pbt-20261017T153218Z-fail.eterm, step 14 add_nodes(g6, ...))
+  summary: >-
+    After add_nodes, a member's global known list for g6 contained non-members
+    (the hidden harness driver, and a free node n12) and had lost a real member (n11).
+  root_cause: >-
+    global:replace_no_group/2 (called on node-up paths when a free node joins a
+    group) RENAMES the free partition's whole no_group known/synced list to the
+    group via lists:keyreplace(no_group, ...). That imports every free-partition
+    node (including hidden nodes there via H2), and if the group already had an
+    entry, the list ends up with two {Group, _} entries; keyfind returns one and
+    members in the other are lost.
+  experimental_fix: >-
+    0007: keep only group members, merge into the existing entry, drop no_group.
+    Trigger replay (8x) on fixed3: pass 4, not_quiescent 3, value_mismatch 1; on
+    fixed4 (0002+0004+0006+0007): pass 6, not_quiescent/new_s_group 2. The traced
+    add_nodes failure is gone; new_s_group failures remain (another mechanism).
+    Not yet A/B-gated.
+  fidelity_target: S
+  port_policy: may_differ        # port: per-group knowledge must never be derived from free-partition knowledge
+  normalization: none

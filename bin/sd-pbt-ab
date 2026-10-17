@@ -34,7 +34,11 @@ for i in $(seq 1 "$ROUNDS"); do
       [ -e "$d" ] || continue; mv "$d" "$OUT/dumps-$arm/"; nd=$((nd + 1))
     done
     echo "$arm	$nd" >> "$OUT/crashes.tsv"
-    rm -f "$ROOT"/test-results/pbt/log-*.log
+    # keep logs with error reports as evidence, drop the rest (thousands per run)
+    mkdir -p "$OUT/errlogs-$arm"
+    find "$ROOT/test-results/pbt" -maxdepth 1 -name 'log-*.log' -exec grep -l -E 'ERROR REPORT|CRASH REPORT' {} + 2>/dev/null \
+      | while read -r f; do mv "$f" "$OUT/errlogs-$arm/"; done || true   # no error logs is the normal case
+    find "$ROOT/test-results/pbt" -maxdepth 1 -name 'log-*.log' -delete
   done
 done
 awk -F'\t' '{c[$1]+=$2; r[$1]+=($2>0)} END {for (a in c) printf "SUT crash dumps arm %s: %d (in %d runs)\n", a, c[a], r[a]}' "$OUT/crashes.tsv" | sort

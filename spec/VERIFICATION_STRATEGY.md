@@ -195,6 +195,21 @@ monitor/link suites. The guide's acceptance matrix applies unchanged.
 
 ---
 
+## Two reference runtimes
+
+Root-causing 19.3's defects (O5, Q1, Q2, C1) and confirming fixes by
+intervention gives a second reference.
+
+| Reference | Image | Used for |
+|---|---|---|
+| **19.3 as shipped** | `localhost/sd-erlang:19.3-reference` | L2 fidelity traces, L5 baseline. "What users ran" |
+| **19.3 + accepted fixes** | `localhost/sd-erlang:19.3-exp-fixed3` (0002 + 0004 + 0006; `patches/experimental/`) | L1/L4 correctness baseline. A port's failure profile must match or beat this one, not 19.3's |
+
+Differences between the two are exactly the `may_differ` entries with
+confirmed fixes. A port that reproduces 19.3's *defects* passes L2 but fails
+L4 against the fixed reference. That's the intended outcome: faithful in
+behaviour, not in bugs.
+
 ## What "correct port" means, operationally
 
 A candidate passes when:

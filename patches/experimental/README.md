@@ -24,3 +24,5 @@ first L4 verdict was withdrawn for exactly that reason.
 | `0005-s_group-0002-plus-join-keep-shared.patch` | Q1 (receiver/add sites) | Q1 trigger replay 4/10 fail, no better than without: incomplete |
 | `0006-s_group-0005-plus-initiator.patch` | Q1 (adds the `new_s_group` initiator site) | Q1 trigger replay **10/10 pass** (vs 4/10 without, 10/10 fail on reference). Regression A/B pending |
 | `combined-0002-0004-0006.patch` | Q1 + Q2 + C1 | image `localhost/sd-erlang:19.3-exp-fixed3` |
+| `0007-global-0004-plus-replace_no_group.patch` | Q3 (free-partition knowledge renamed into a group) | Q3 trigger 8x: pass 6 vs 4 on fixed3; traced add_nodes case gone, new_s_group failures remain. Not yet A/B-gated |
+| `combined-0002-0004-0006-0007.patch` | Q1 + Q2 + Q3 + C1 | image `localhost/sd-erlang:19.3-exp-fixed4` |

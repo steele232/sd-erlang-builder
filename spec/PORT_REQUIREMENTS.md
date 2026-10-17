@@ -28,6 +28,7 @@ that checks it.
 | R-ISO-1 | removing a node from g1 must not disturb `global` knowledge in other groups shared with it | Q2 | `sd_pbt_q2` (19.3: 5/5) | 0002: 0/5, A/B p = 0.29, provisionally accepted |
 | R-CRASH-1 | no sync-format confusion between free and s_group peers (C1a); no positional assumptions about peers' group lists (C1b: 19.3 matched the peer's list against its own because `_SGroups` was reused); `global_name_server` must not crash on any peer message | C1 | `c1-seq30` crash rate (19.3: 6/10) + L4 crash-dump capture | 0004: 0/10 interleaved (p = 0.005); regression A/B clean, crash dumps 12 vs 0. **Accepted** |
 | R-HID-1 | free nodes never `global`-sync with hidden nodes | H2 | H2 probe | none |
+| R-NS-3 | per-group knowledge is never derived from free-partition (`no_group`) knowledge; a node joining a group starts that group's knowledge empty and syncs | Q3 | Q3 trigger replay | 0007 (partial evidence) |
 | R-PERS-1 | `-rsconfig` persists **every** membership change, synchronously and atomically | RS1 | `sd_pbt_rsconfig` (19.3: 0/3 at 0 ms) | none |
 | R-ATTR-1 | one attribute store, used by both `add_attributes/1` and `choose_nodes/1` | AT1 | `sd_pbt_attrs` | none |
 

@@ -153,6 +153,7 @@ unconditionally.
 |---|---|---|
 | Port design B (topology provider on the OTP 25+ `global_group` seam + separate namespace server) over A (re-port 19.3's `global.erl`) | `spec/PORT_OTP29_FEASIBILITY.md` | recommended |
 | Q2 fix (keep still-shared nodes in `remove_nodes_check`) | `patches/experimental/0002…`; targeted 0/5 vs 5/5; A/B p = 0.29 | accepted |
+| Q1 fix (never logically disconnect a node that still shares another group, on join paths too) | `patches/experimental/0006…`; trigger replay 10/10 pass vs 4/10 | regression A/B pending |
 | C1 fix (tolerate a flat peer list; don't reuse a bound `_SGroups`) | `patches/experimental/0004…`; interleaved 0/10 vs 6/10 (p = 0.005); A/B crash dumps 0 vs 12 | accepted |
 | O5 fix must be the *whole* stock merge protocol, not a retarget | `0001` passes its repro but A/B p = 0.003 regression | 0001 rejected |
 | RS1: persist every `-rsconfig` change synchronously | `test/pbt/sd_pbt_rsconfig.erl`, D3.3 ch. 2 | requirement R-PERS-1 |

@@ -131,7 +131,7 @@ command weights in [D3.3] Fig. 5.4 (also in [AST14] Fig. 6, without
 | — | restarted node's pids can equal pre-crash pids | n/a | n/a | OTP 20 property, not SD |
 | I1 | `add_nodes(G, [Caller])` returns `{ok, G, []}` with no membership check (`bin/sd-pbt`) | silent | diverges (M: Error) | I-behaviour, value only |
 | I2 | `remove_nodes/2` removes the *intersection* with the members and returns `ok` (`bin/sd-pbt`) | silent | diverges (M: False, no change) | I-behaviour, **state** (adapter `sd_pbt_impl`) |
-| Q1 | after `new_s_group`, one member's `global` occasionally never syncs with the group (campaigns: 2/20 runs) | violates S4 | violates M | **defect**, cf. RELEASE R4 |
+| Q1 | after `new_s_group`, some members' `global` knowledge of *another* shared group is permanently incomplete | violates S1/S4 | violates M | **defect, root cause confirmed**: `new_s_group`/`add_nodes` logically disconnect nodes that still share another group (same class as Q2); fix 0006: trigger 10/10 pass |
 | Q2 | `remove_nodes(g1, [C])` wipes `global`'s knowledge of C in *another* group shared with C (`sd_pbt_q2`: 5/5) | violates S1/S4 | violates M | **defect**, root cause: unconditional `disconnect_nodes` in `remove_nodes_check`; experimental fix 0002: 0/5 |
 | O6 | a name registered before `add_nodes/2` can miss a newly added member (campaign: 1/10 runs) | violates S4 | violates M | **defect**, very likely the O5 root cause (not yet trace-confirmed) |
 | F1 | on free nodes, a failed `global:register_name/2` returns `{no, Reason}`; stock returns `no` (L5: 2/20 sequences) | violates S2 | n/a | I-behaviour vs stock; port policy undecided |
