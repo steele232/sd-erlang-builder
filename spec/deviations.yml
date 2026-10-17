@@ -343,3 +343,40 @@
   fidelity_target: S
   port_policy: may_differ        # a port should persist every change (e.g. versioned write, fsync)
   normalization: none
+
+- id: DN1
+  layers: [S, I]
+  source: test/pbt/sd_pbt_dupnames.erl (P15), 2026-10-17
+  summary: >-
+    Launch config with conflicting same-name groups containing the node
+    ({g1,[d1,d2]}, {g1,[d1,d3]}): D3.3 ch. 3.1 says "an error is returned and the
+    node terminates". 19.3 starts normally with the UNION g1=[d1,d2,d3]
+    (s_group:update_conf/1 merges every same-name definition). Identical in
+    17.4-rebased, so never implemented as described.
+  fidelity_target: undecided
+  port_policy: undecided         # S says terminate; I merges. Users may rely on merge-by-union
+  normalization: none
+
+- id: DN2
+  layers: [S, I]
+  source: test/pbt/sd_pbt_dupnames.erl (P15)
+  summary: >-
+    Conflicting remote same-name groups: D3.3 says "keep a record of no s_group
+    with that name"; 19.3 keeps the merged group in s_groups/0's other groups.
+    Same in 17.4.
+  fidelity_target: undecided
+  port_policy: undecided
+  normalization: none
+
+- id: AT1
+  layers: [S, I]
+  source: test/pbt/sd_pbt_attrs.erl (P17)
+  summary: >-
+    s_group:add_attributes/1 stores attributes in s_group's state, but
+    s_group:choose_nodes([{attribute, A}]) reads global:registered_attributes/0
+    (a separate store written by global:add_attribute/1). Attributes added
+    through the s_group API are invisible to selection; global:add_attribute/1
+    works. Same in 17.4.
+  fidelity_target: S
+  port_policy: may_differ        # recommendation: one store, read and written by the s_group API
+  normalization: none

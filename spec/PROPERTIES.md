@@ -22,9 +22,15 @@ property, `spec/deviations.yml` says whether a port must reproduce or may fix it
 | P12 | **Crash isolation:** a crash of node X affects only groups containing X | S1 + reliability goal | demo3 step 10, demo15 crash steps | ✅ holds in scenarios |
 | P13 | **No SD-induced crashes:** no sequence of public API calls makes a node's kernel die | reliability goal | L4 campaigns + crash-dump capture | ❌ **C1** (`global.erl:3080`) |
 | P14 | **Restart recovery:** with `-rsconfig`, a restarted node regains its last recorded memberships | S8 | `sd_pbt_rsconfig` | ❌ **RS1**: changes within the same second are not persisted (0/3 vs 3/3 with 2 s spacing) |
-| P15 | **Duplicate group names:** behave as D3.3 ch. 3 specifies (merge identical, terminate on conflicting own config, ignore conflicting remote) | S7 | none yet | ❓ untested |
+| P15 | **Duplicate group names:** behave as D3.3 ch. 3 specifies (merge identical, terminate on conflicting own config, ignore conflicting remote) | S7 | `sd_pbt_dupnames` | ⚠️ identical merge ✅; conflicting-with-self merges by union instead of terminating (**DN1**); conflicting remote kept (**DN2**) |
 | P16 | **Name GC on process death:** a dead registered pid disappears from its group's namespace on every member | S4, `global` | demo3 step 10 (`global:whereis_name` drop) | ✅ holds in scenario |
-| P17 | **Attribute selection:** `choose_nodes/1` returns nodes carrying all requested attributes | JPDC'16 §3 | none yet | ❓ untested |
+| P17 | **Attribute selection:** `choose_nodes/1` returns nodes carrying all requested attributes | JPDC'16 §3 | `sd_pbt_attrs` | ❌ **AT1**: `s_group:add_attributes/1` is invisible to `choose_nodes/1` (two separate stores) |
 
-Coverage gaps, in priority order: P15 (duplicate names),
-P17 (attributes), and failure semantics in L1 (proposal `spec/proposals/M1-failures.md`).
+Every property now has at least one oracle. The remaining gap is failure
+semantics in L1 (proposal `spec/proposals/M1-failures.md`).
+
+**Historical note.** The SD delta between `17.4-rebased` and `19.3-rebased` is
+purely mechanical: license headers (EPL → Apache 2.0) and `now()` →
+`erlang:unique_integer([monotonic])` for sync tags. DN1, DN2 and AT1 behave
+identically in 17.4. 19.3 is therefore a faithful oracle for SD Erlang as
+RELEASE shipped it.
