@@ -1,0 +1,9 @@
+{application, sd_demo,
+ [{description, "Tiny SD Erlang s_group demo: one gateway, two worker groups"},
+  {vsn, "0.1.0"},
+  {registered, [sd_demo_sup]},
+  {applications, [kernel, stdlib]},
+  {mod, {sd_demo_app, []}},
+  %% role: gateway | worker.  A worker registers `worker_pool` in `group`.
+  {env, [{role, gateway}, {group, undefined}]},
+  {modules, [sd_demo_app, sd_demo_sup, sd_demo_worker, sd_demo_scenario]}]}.

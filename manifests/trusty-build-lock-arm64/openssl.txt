@@ -1,0 +1,6 @@
+OpenSSL 1.0.1f 6 Jan 2014
+built on: Tue Dec  4 20:31:41 UTC 2018
+platform: debian-arm64
+options:  bn(64,64) rc4(ptr,char) des(idx,cisc,16,int) blowfish(ptr) 
+compiler: cc -fPIC -DOPENSSL_PIC -DOPENSSL_THREADS -D_REENTRANT -DDSO_DLFCN -DHAVE_DLFCN_H -DL_ENDIAN -DTERMIO -g -O2 -fstack-protector --param=ssp-buffer-size=4 -Wformat -Werror=format-security -D_FORTIFY_SOURCE=2 -Wl,-Bsymbolic-functions -Wl,-z,relro -Wa,--noexecstack -Wall
+OPENSSLDIR: "/usr/lib/ssl"

@@ -1,0 +1,45 @@
+# Build historical SD Erlang from a local, SHA-verified git bundle.
+# No Internet access is required (or wanted) inside this obsolete userland.
+ARG HISTORICAL_BUILDER
+FROM ${HISTORICAL_BUILDER} AS build
+
+ARG SD_REF
+ARG SD_BUNDLE=vendor/sd-erlang-19.3.bundle
+ARG PREFIX=/opt/sd-erlang
+
+COPY ${SD_BUNDLE} /src/sd-erlang.bundle
+
+# Glasgow's documented sequence (autoconf / configure / boot -a / make),
+# plus --prefix and make install from the handoff guide.
+# Percept2 (lib/percept2) is deliberately omitted: it is RELEASE profiling
+# tooling, not part of the six-file s_group functionality.
+RUN test -n "${SD_REF}" \
+ && git clone --no-checkout /src/sd-erlang.bundle /src/otp \
+ && cd /src/otp \
+ && git checkout --detach "${SD_REF}" \
+ && test "$(git rev-parse HEAD)" = "${SD_REF}" \
+ && export ERL_TOP=/src/otp \
+ && ./otp_build autoconf \
+ && ./otp_build configure --prefix="${PREFIX}" \
+ && ./otp_build boot -a \
+ && make -j"$(nproc)" \
+ && make install \
+ && git rev-parse HEAD > "${PREFIX}/SD_SOURCE_SHA"
+
+FROM ${HISTORICAL_BUILDER}
+ARG PREFIX=/opt/sd-erlang
+# EXPECT_SD=false builds the stock-OTP control from the SD commit's parent.
+ARG EXPECT_SD=true
+COPY --from=build ${PREFIX} ${PREFIX}
+ENV PATH=${PREFIX}/bin:$PATH
+
+# Smoke test: release, and whether kernel's supervisor runs s_group (SD)
+# or the stock global_group.
+RUN erl -noshell -eval ' \
+      Expect = list_to_atom(os:getenv("EXPECT_SD")), \
+      io:format("otp_release=~s source=~s", [erlang:system_info(otp_release), \
+                element(2, file:read_file("/opt/sd-erlang/SD_SOURCE_SHA"))]), \
+      io:format("s_group running=~p (expected ~p)~n", [is_pid(whereis(s_group)), Expect]), \
+      Expect = is_pid(whereis(s_group)), \
+      Expect = not is_pid(whereis(global_group)), \
+      halt().'

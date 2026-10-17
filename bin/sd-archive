@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Preserve historical SD Erlang sources as SHA-verified git bundles.
+#
+#   archive/release-otp.git   bare mirror of release-project/otp (+ upstream OTP tags)
+#   vendor/*.bundle           self-contained build inputs (not committed)
+#   manifests/SHA256SUMS      committed hashes of the bundles
+#
+# Idempotent: re-running verifies the pinned SHAs and rewrites the bundles.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MIRROR="$ROOT/archive/release-otp.git"
+
+SD_17_4_SHA=afce40a5abfbdd2df57da507de74e610877f1629
+SD_19_3_SHA=0fdfcf28ab2b6e726edc9c69db71f85f1e0005dd
+OTP_17_4_SHA=af87b1c3d4897840d8247589a88d3611106ecedc
+OTP_19_3_SHA=a748cafdc7063d9f181ba12088db6458793ced2f
+
+if [ ! -d "$MIRROR" ]; then
+  mkdir -p "$ROOT/archive"
+  git clone --mirror https://github.com/release-project/otp.git "$MIRROR"
+fi
+if ! git -C "$MIRROR" remote get-url upstream >/dev/null 2>&1; then
+  git -C "$MIRROR" remote add upstream https://github.com/erlang/otp.git
+fi
+if ! git -C "$MIRROR" rev-parse -q --verify refs/tags/upstream-OTP-19.3 >/dev/null; then
+  git -C "$MIRROR" fetch --no-tags upstream \
+    refs/tags/OTP-17.4:refs/tags/upstream-OTP-17.4 \
+    refs/tags/OTP-19.3:refs/tags/upstream-OTP-19.3
+fi
+
+verify() {
+  local ref="$1" want="$2" got
+  got="$(git -C "$MIRROR" rev-parse "$ref^{commit}")"
+  if [ "$got" != "$want" ]; then
+    echo "SHA MISMATCH for $ref: expected $want, got $got" >&2
+    exit 1
+  fi
+  echo "verified $ref = $want"
+}
+verify refs/heads/17.4-rebased   "$SD_17_4_SHA"
+verify refs/heads/19.3-rebased   "$SD_19_3_SHA"
+verify refs/tags/upstream-OTP-17.4 "$OTP_17_4_SHA"
+verify refs/tags/upstream-OTP-19.3 "$OTP_19_3_SHA"
+
+mkdir -p "$ROOT/vendor"
+git -C "$MIRROR" bundle create "$ROOT/vendor/sd-erlang-17.4.bundle" \
+  refs/heads/17.4-rebased refs/tags/upstream-OTP-17.4
+git -C "$MIRROR" bundle create "$ROOT/vendor/sd-erlang-19.3.bundle" \
+  refs/heads/19.3-rebased refs/tags/upstream-OTP-19.3
+
+(cd "$ROOT/vendor" && shasum -a 256 sd-erlang-17.4.bundle sd-erlang-19.3.bundle) \
+  > "$ROOT/manifests/SHA256SUMS"
+cat "$ROOT/manifests/SHA256SUMS"

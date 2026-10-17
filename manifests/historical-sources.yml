@@ -1,0 +1,31 @@
+# Immutable source anchors for historical SD Erlang.
+# Never build from branch names; build from the SHAs below.
+# Resolved 2026-10-16 via `git ls-remote` + `git clone --mirror` (bin/sd-archive verifies these).
+release_project_otp:
+  repository: https://github.com/release-project/otp.git
+
+  sd_17_4:
+    branch: 17.4-rebased
+    sha: afce40a5abfbdd2df57da507de74e610877f1629
+    tip_commit: "Remove end_loop/0 function (Natalia Chechina, 2015-06-29)"
+
+  sd_19_2:
+    branch: 19.2-rebased
+    sha: 91394b9ef96276a98917cdb193fd3440be47704b
+
+  sd_19_3:
+    branch: 19.3-rebased
+    sha: 0fdfcf28ab2b6e726edc9c69db71f85f1e0005dd
+    tip_commit: "Add s_group functionality (Natalia Chechina, 2017-03-31)"
+    # Archaeology note (observed, not documented by Glasgow):
+    # the parent of this commit is upstream erlang/otp `master` at
+    # 5da9e0ab5cb96f2cb37e534b2c1a55c0c2c9783c, whose OTP_VERSION is 20.0-rc0.
+    # OTP-19.3 is an ancestor but NOT the base; the branch is 1419 commits past it.
+    # The SD change itself is exactly the single tip commit.
+    sd_commit_parent: 5da9e0ab5cb96f2cb37e534b2c1a55c0c2c9783c
+    otp_version_file: 20.0-rc0
+
+upstream_otp:
+  repository: https://github.com/erlang/otp.git
+  OTP-17.4: af87b1c3d4897840d8247589a88d3611106ecedc
+  OTP-19.3: a748cafdc7063d9f181ba12088db6458793ced2f

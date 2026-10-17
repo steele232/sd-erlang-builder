@@ -1,0 +1,33 @@
+# Honest status of each verification oracle named in the handoff guide.
+historical_quickcheck:
+  source: not found
+  searched: >-
+    `git grep eqc_statem|prop_s_group|new_s_group_next_state` over every branch of
+    release-project/otp (17.4-rebased, 19.2-rebased, 19.3-rebased, dev, repair,
+    sd-erlang-tutorial, master) on 2026-10-16; only stock OTP eqc suites matched.
+  executable: no
+  reason: the D3.3 eqc_statem model is not in the public source mirror
+proper_port:
+  executable: no
+  status: not started (next milestone)
+tla_model:
+  status: not started (next milestone)
+demo_scenario:
+  executable: yes
+  location: demo/src/sd_demo_scenario.erl
+  scope: >-
+    3-node smoke-level semantic checks (membership, non-transitive connectivity,
+    group-scoped names, add/remove/new/delete, crash isolation, restart recovery).
+    This is NOT the published QuickCheck model and must not be described as such.
+differential_control:
+  stock_runtime: release-project/otp master = 5da9e0ab5cb96f2cb37e534b2c1a55c0c2c9783c
+  note: exact parent of the SD commit, so the only source difference is the s_group patch
+
+last_local_run:
+  date: 2026-10-16
+  host: macOS arm64, podman 5.7.0 (applehv VM), builder trusty arm64v8
+  sd_scenario: 10/10 pass
+  stock_control: 2/2 pass (gpu1 meshed to connector transitively in ~200 ms)
+observed_historical_behaviours:
+  - remove_nodes/2 performs a logical disconnect only; the distribution link may persist
+  - pid of a restarted node can compare equal to the pre-crash pid (OTP 20 2-bit creation)

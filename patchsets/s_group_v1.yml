@@ -1,0 +1,35 @@
+# Machine-readable inventory of the historical s_group semantic patch.
+id: s_group-v1
+oracle: sd-erlang-19.3
+source_commit: 0fdfcf28ab2b6e726edc9c69db71f85f1e0005dd   # release-project/otp 19.3-rebased tip
+source_parent: 5da9e0ab5cb96f2cb37e534b2c1a55c0c2c9783c   # upstream master, OTP_VERSION 20.0-rc0
+
+patches:
+  # Exact single SD commit (git format-patch). This is the true semantic delta.
+  - path: patches/reference/sd-19.3-s_group-commit.patch
+    sha256: efb84fae1062cfc7a2541a81510f2092b368c5b91f77f180d1773ba630b48b26
+  # Six-file diff vs. the OTP-19.3 tag, exactly as the handoff guide prescribes.
+  # NOTE: also contains ~25 lines of unrelated upstream drift (OTP-19.3 -> master)
+  # in kernel.erl / net_kernel.erl / kernel.app.src. Prefer the commit patch.
+  - path: patches/reference/OTP-19.3-s_group.patch
+    sha256: a45fccdaae43826c8f0f06c9a31e2034290d34fd4619caf98bb6d0cf7febdcc3
+
+# Glasgow's documented six files:
+production_paths:
+  - lib/kernel/src/global.erl
+  - lib/kernel/src/global_search.erl
+  - lib/kernel/src/kernel.erl
+  - lib/kernel/src/net_kernel.erl
+  - lib/kernel/src/s_group.erl
+  - lib/kernel/src/kernel.app.src
+# Also touched by the actual commit (build plumbing, no semantics):
+build_paths:
+  - lib/kernel/src/Makefile                 # adds s_group to MODULES
+  - bootstrap/lib/kernel/ebin/kernel.app    # bootstrap copy of kernel.app.src change
+
+semantic_features:
+  - overlapping_s_groups
+  - group_scoped_names
+  - constrained_connection_transitivity
+  - dynamic_add_remove
+  - restart_state           # -rsconfig

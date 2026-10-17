@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Build the historical SD Erlang 19.3 reference image with podman.
+#   1. builder image from the digest-pinned Ubuntu 14.04 base
+#   2. SD Erlang from vendor/sd-erlang-19.3.bundle at the pinned SHA (never a branch name)
+#
+#   --stock-control  instead build the SD commit's exact upstream parent
+#                    (same tree minus the s_group patch) as a differential control.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SD_19_3_SHA=0fdfcf28ab2b6e726edc9c69db71f85f1e0005dd
+BUILDER_TAG=localhost/sd-builder:trusty-bootstrap
+SD_19_3_PARENT_SHA=5da9e0ab5cb96f2cb37e534b2c1a55c0c2c9783c
+IMAGE_TAG=localhost/sd-erlang:19.3-reference
+REF="$SD_19_3_SHA"
+EXPECT_SD=true
+if [ "${1:-}" = --stock-control ]; then
+  IMAGE_TAG=localhost/sd-erlang:19.3-reference-parent-stock
+  REF="$SD_19_3_PARENT_SHA"
+  EXPECT_SD=false
+fi
+
+(cd "$ROOT/vendor" && shasum -a 256 -c "$ROOT/manifests/SHA256SUMS")
+
+if ! podman image exists "$BUILDER_TAG"; then
+  podman build -f "$ROOT/containers/historical/Containerfile.bootstrap" \
+    -t "$BUILDER_TAG" "$ROOT/containers/historical"
+fi
+# Refer to the builder by immutable image ID, not by tag.
+BUILDER_ID="$(podman image inspect "$BUILDER_TAG" --format '{{.Id}}')"
+echo "builder image id: $BUILDER_ID"
+
+podman build \
+  --build-arg HISTORICAL_BUILDER="$BUILDER_ID" \
+  --build-arg SD_REF="$REF" \
+  --build-arg EXPECT_SD="$EXPECT_SD" \
+  -f "$ROOT/containers/historical/Containerfile.sd" \
+  -t "$IMAGE_TAG" "$ROOT"
+
+ID_FILE="$ROOT/manifests/$(echo "${IMAGE_TAG#localhost/}" | tr ':' '-').image-id"
+printf '%s source=%s builder=%s\n' \
+  "$(podman image inspect "$IMAGE_TAG" --format '{{.Id}}')" "$REF" "$BUILDER_ID" > "$ID_FILE"
+echo "built $IMAGE_TAG: $(cat "$ID_FILE")"

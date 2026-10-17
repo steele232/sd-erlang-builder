@@ -1,0 +1,11 @@
+# Demo application layered on a historical runtime image (referenced by ID).
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+
+COPY demo/src /demo/src
+COPY demo/config /demo/config
+RUN mkdir -p /demo/ebin \
+ && erlc -Werror -o /demo/ebin /demo/src/*.erl \
+ && cp /demo/src/sd_demo.app.src /demo/ebin/sd_demo.app
+
+WORKDIR /demo

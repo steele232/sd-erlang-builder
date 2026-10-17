@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Run the 3-node s_group demo on historical SD Erlang 19.3 with podman.
+#
+#   bin/sd-demo up          build demo image, start gateway, gpu1, connector
+#   bin/sd-demo scenario    run the executable s_group checks from the gateway
+#   bin/sd-demo shell NODE  remote shell (hidden node) into gateway|gpu1|connector
+#   bin/sd-demo status      membership + connections as each node sees them
+#   bin/sd-demo control     same topology on stock OTP (SD commit's parent)
+#   bin/sd-demo down        stop everything and remove the network/secret
+#   bin/sd-demo all         up + scenario + control  (default)
+#
+# Nodes run on an --internal podman network (no egress) because the 2017
+# runtime and its OpenSSL are archival. The cookie is generated per run and
+# delivered as a podman secret, never on a command line or in the repo.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SD_RUNTIME=localhost/sd-erlang:19.3-reference
+STOCK_RUNTIME=localhost/sd-erlang:19.3-reference-parent-stock
+SD_DEMO=localhost/sd-demo:19.3
+STOCK_DEMO=localhost/sd-demo:19.3-parent-stock
+NODES=(gateway gpu1 connector)
+SECRET=sd-demo-cookie
+
+network_for() { [ "$1" = sd ] && echo sd-lab || echo sd-lab-control; }
+prefix_for()  { [ "$1" = sd ] && echo sd || echo sdctl; }
+
+build_demo_image() {  # runtime-tag demo-tag
+  local runtime_id
+  runtime_id="$(podman image inspect "$1" --format '{{.Id}}')"
+  podman build --quiet --build-arg RUNTIME_IMAGE="$runtime_id" \
+    -f "$ROOT/containers/demo/Containerfile" -t "$2" "$ROOT" >/dev/null
+  echo "demo image $2 on runtime $runtime_id"
+}
+
+ensure_secret() {
+  if ! podman secret exists "$SECRET"; then
+    head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F' \
+      | podman secret create "$SECRET" - >/dev/null
+  fi
+}
+
+node_args() {  # node -> app env
+  case "$1" in
+    gateway)   echo "-sd_demo role gateway" ;;
+    gpu1)      echo "-sd_demo role worker -sd_demo group local_ai" ;;
+    connector) echo "-sd_demo role worker -sd_demo group external_ai" ;;
+  esac
+}
+
+start_cluster() {  # mode(sd|stock) image config
+  local mode="$1" image="$2" config="$3" net prefix n
+  net="$(network_for "$mode")"; prefix="$(prefix_for "$mode")"
+  ensure_secret
+  podman network exists "$net" || podman network create --internal "$net" >/dev/null
+  for n in "${NODES[@]}"; do
+    podman rm -f "$prefix-$n" >/dev/null 2>&1 || true
+    local app_start="ok = application:start(sd_demo)"
+    # The stock control has no s_group module, so it runs no workers.
+    [ "$mode" = stock ] && app_start="ok"
+    # shellcheck disable=SC2046
+    podman run -d --name "$prefix-$n" \
+      --hostname "$n.sd.lab" --network "$net" --network-alias "$n.sd.lab" \
+      --restart on-failure \
+      --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+      "$image" \
+      erl -noshell -name "$n@$n.sd.lab" \
+          -config "/demo/config/$config" -pa /demo/ebin \
+          $(node_args "$n") \
+          -eval "$app_start" >/dev/null
+    echo "started $prefix-$n ($n@$n.sd.lab) on $net"
+  done
+}
+
+# Run an expression on the gateway from a short-lived hidden driver node.
+on_gateway() {  # prefix expr
+  podman exec "$1-gateway" erl -noshell -hidden -name "driver$$@gateway.sd.lab" -eval "
+    case rpc:call('gateway@gateway.sd.lab', $2, infinity) of
+        ok -> halt(0);
+        {badrpc, R} -> io:format(\"badrpc: ~p~n\", [R]), halt(2);
+        Other -> io:format(\"~p~n\", [Other]), halt(1)
+    end."
+}
+
+wait_for_gateway() {  # prefix
+  for _ in $(seq 1 50); do
+    if podman exec "$1-gateway" erl -noshell -hidden -name "probe$$@gateway.sd.lab" \
+         -eval "halt(case net_adm:ping('gateway@gateway.sd.lab') of pong -> 0; _ -> 1 end)." \
+         >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "gateway did not come up" >&2; exit 1
+}
+
+cmd_up() {
+  build_demo_image "$SD_RUNTIME" "$SD_DEMO"
+  start_cluster sd "$SD_DEMO" sd_groups
+  wait_for_gateway sd
+}
+
+cmd_scenario() { on_gateway sd "sd_demo_scenario, run, []"; }
+
+cmd_status() {
+  on_gateway sd "erlang, apply, [fun() ->
+      [io:format(\"~-28s groups=~p~n~28s nodes=~p~n\",
+                 [N, rpc:call(N, s_group, own_s_groups, []), \"\", rpc:call(N, erlang, nodes, [])])
+       || N <- ['gateway@gateway.sd.lab', 'gpu1@gpu1.sd.lab', 'connector@connector.sd.lab']],
+      ok end, []]"
+}
+
+cmd_shell() {
+  local n="${1:?usage: sd-demo shell gateway|gpu1|connector}"
+  exec podman exec -it "sd-$n" erl -hidden -name "shell$$@$n.sd.lab" -remsh "$n@$n.sd.lab"
+}
+
+cmd_control() {
+  if ! podman image exists "$STOCK_RUNTIME"; then
+    "$ROOT/bin/sd-build-historical" --stock-control
+  fi
+  build_demo_image "$STOCK_RUNTIME" "$STOCK_DEMO"
+  start_cluster stock "$STOCK_DEMO" stock_control
+  wait_for_gateway sdctl
+  local rc=0
+  on_gateway sdctl "sd_demo_scenario, control, []" || rc=$?
+  for n in "${NODES[@]}"; do podman rm -f "sdctl-$n" >/dev/null; done
+  podman network rm sd-lab-control >/dev/null 2>&1 || true
+  return $rc
+}
+
+cmd_down() {
+  for n in "${NODES[@]}"; do
+    podman rm -f "sd-$n" "sdctl-$n" >/dev/null 2>&1 || true
+  done
+  podman network rm sd-lab sd-lab-control >/dev/null 2>&1 || true
+  podman secret rm "$SECRET" >/dev/null 2>&1 || true
+  echo "demo stopped"
+}
+
+case "${1:-all}" in
+  up)       cmd_up ;;
+  scenario) cmd_scenario ;;
+  status)   cmd_status ;;
+  shell)    shift; cmd_shell "$@" ;;
+  control)  cmd_control ;;
+  down)     cmd_down ;;
+  all)      cmd_up; cmd_scenario; echo; echo "--- stock OTP control ---"; cmd_control ;;
+  *)        sed -n '2,12p' "$0"; exit 64 ;;
+esac

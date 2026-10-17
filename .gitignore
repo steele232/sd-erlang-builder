@@ -1,0 +1,9 @@
+# Local git mirror (re-creatable with bin/sd-archive; hashes recorded in manifests/)
+/archive/
+# Git bundles are large binary preservation artifacts; their SHA-256 is committed
+/vendor/*.bundle
+# Runtime state from demo runs
+/demo/_run/
+/demo/ebin/
+*.beam
+erl_crash.dump

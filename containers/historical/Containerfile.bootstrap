@@ -1,0 +1,35 @@
+# Historical SD Erlang builder: Ubuntu 14.04 (contemporary with OTP 17-19).
+# Pinned by manifest-list digest; podman selects the native arch variant
+# (amd64 or arm64v8 both exist under this digest).
+# Archival only. Never use this image for exposed services.
+FROM docker.io/library/ubuntu@sha256:64483f3496c1373bfd55348e88694d1c4d0c9b660dee6bfef5e12f43b9933b30
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C
+ENV LC_ALL=C
+
+# Trusty amd64 lives on old-releases; arm64 lives on ports.ubuntu.com.
+RUN sed -i \
+      -e 's|archive.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g' \
+      -e 's|security.ubuntu.com/ubuntu|old-releases.ubuntu.com/ubuntu|g' \
+      /etc/apt/sources.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential \
+      autoconf \
+      m4 \
+      perl \
+      git \
+      ca-certificates \
+      libncurses5-dev \
+      libssl-dev \
+ && mkdir -p /opt/build-lock \
+ && dpkg-query -W -f='${Package}=${Version}\n' \
+      | LC_ALL=C sort \
+      > /opt/build-lock/dpkg.lock \
+ && gcc --version      > /opt/build-lock/gcc.txt \
+ && make --version     > /opt/build-lock/make.txt \
+ && autoconf --version > /opt/build-lock/autoconf.txt \
+ && openssl version -a > /opt/build-lock/openssl.txt \
+ && uname -m           > /opt/build-lock/arch.txt \
+ && rm -rf /var/lib/apt/lists/*
