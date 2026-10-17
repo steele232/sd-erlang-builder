@@ -199,6 +199,8 @@
     new_s_group_check, add_nodes, add_nodes_check.
     Fixes: 0005 (receiver sites + add paths only): still 4/10. 0006 (adds the
     initiator site): 10/10 pass. Combined image localhost/sd-erlang:19.3-exp-fixed3.
+    REVALIDATED at n = 20: without 0006 (0002+0004) 4/20 fail; with 0006 0/20
+    (one-sided Fisher p = 0.053). A/B vs reference: no regression.
   failure_shapes: >-
     Across 30 stored not_quiescent failures: 24 show only MUTUAL non-knowledge
     (pairs that never completed a sync); 6 show asymmetric pairs (a knows b,
