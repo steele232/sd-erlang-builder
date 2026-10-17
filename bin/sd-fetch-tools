@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Fetch pinned third-party test tooling into vendor/ (not committed).
+#   PropEr v1.3 (GPLv3, test-only; last release supporting OTP 17-21)
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROPER_SHA=f2b7b81666b21707244a40857cf50f4362b6e3c2
+
+if [ ! -d "$ROOT/archive/proper/proper/.git" ]; then
+  mkdir -p "$ROOT/archive/proper"
+  git clone -q https://github.com/proper-testing/proper.git "$ROOT/archive/proper/proper"
+fi
+git -C "$ROOT/archive/proper/proper" fetch -q origin "refs/tags/v1.3:refs/tags/v1.3" || true
+test "$(git -C "$ROOT/archive/proper/proper" rev-parse 'v1.3^{commit}')" = "$PROPER_SHA"
+rm -rf "$ROOT/vendor/proper"
+mkdir -p "$ROOT/vendor"
+git -C "$ROOT/archive/proper/proper" archive --format=tar --prefix=proper/ "$PROPER_SHA" \
+  | tar -x -C "$ROOT/vendor"
+echo "vendor/proper at $PROPER_SHA"

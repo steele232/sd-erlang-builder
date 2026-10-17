@@ -4,6 +4,8 @@
 %%   never/2,3  immediate safety: Fun must stay false for a whole window
 -module(sd_demo_check).
 
+-include("sd_compat.hrl").
+
 -export([run_steps/1, report/1, check/3,
          await/2, await/3, never/2, never/3, own_groups/1]).
 
@@ -18,8 +20,8 @@ run_steps(Steps) ->
               Result = try Fun() of
                            {ok, Info} -> {pass, Info}
                        catch
-                           Class:Reason ->
-                               {fail, {Class, Reason, erlang:get_stacktrace()}}
+                           ?EXCEPTION(Class, Reason, Stack) ->
+                               {fail, {Class, Reason, ?GET_STACK(Stack)}}
                        end,
               Ms = erlang:monotonic_time(millisecond) - T0,
               case Result of

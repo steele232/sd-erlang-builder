@@ -1,0 +1,113 @@
+%% Observe the implementation's state and compare it with the model.
+%%
+%% Conformance relation  I ~ M  (D3.3 5.2 / AST'14 4.5: "the actual state
+%% information is collected from each node ..., merged and normalised to the
+%% same format as the abstract state"):
+%%
+%%   C1 membership   for every node, own_s_groups() == M's groups containing it
+%%                   (this also makes every member agree on each group's node list)
+%%   C2 namespace    for every group G and every member N, N's global table for
+%%                   G == M's namespace of G  (replication on all members)
+%%   C3 connections  M's connections of N  ⊆  nodes(connected) on N
+%%                   (I may hold extra links: O2/O4 in spec/deviations.yml)
+%%
+%% Not compared (M constructs with no stable observable in I): free normal
+%% group partitions and their namespaces, node visibility (hidden vs normal).
+%%
+%% Because I converges asynchronously (R3), conformance is checked as
+%% eventual equality: poll until I ~ M or the deadline passes.
+-module(sd_pbt_obs).
+
+-export([observe/1, diff/3, await_conformance/3, await_quiescent/2]).
+
+-define(POLL_MS, 100).
+
+%% Returns #{Node => #{groups => [{G, Nodes}], names => [{G, [{Name, PidRef}]}],
+%%                     conns => [Node]}}
+observe(PidMaps) ->
+    Driverless = fun(Ns) -> [N || N <- Ns, lists:member(N, sd_pbt_cluster:sut_nodes())] end,
+    maps:from_list(
+      [{N, observe_node(N, PidMaps, Driverless)} || N <- sd_pbt_cluster:sut_nodes()]).
+
+observe_node(N, PidMaps, Driverless) ->
+    Groups = case rpc:call(N, s_group, own_s_groups, []) of
+                 L when is_list(L) -> lists:sort([{G, lists:sort(Ns)} || {G, Ns} <- L]);
+                 Other -> {error, Other}
+             end,
+    Names = case Groups of
+                {error, _} -> [];
+                _ -> [{G, group_names(N, G, PidMaps)} || {G, _} <- Groups]
+            end,
+    Conns = case rpc:call(N, erlang, nodes, [connected]) of
+                Cs when is_list(Cs) -> lists:sort(Driverless(Cs));
+                _ -> []
+            end,
+    #{groups => Groups, names => Names, conns => Conns}.
+
+group_names(N, G, PidMaps) ->
+    All = case rpc:call(N, global, registered_names, [all_names]) of
+              L when is_list(L) -> L;
+              _ -> []
+          end,
+    lists:sort([{Name, sd_pbt_cluster:to_ref(rpc:call(N, global, whereis_name, [G, Name]), PidMaps)}
+                || {G1, Name} <- All, G1 =:= G]).
+
+%% [] when I ~ M, otherwise a list of human-readable differences.
+diff(Model, Obs, Nodes) ->
+    lists:append([node_diff(N, Model, maps:get(N, Obs)) || N <- Nodes]).
+
+node_diff(N, Model, #{groups := IGroups, names := INames, conns := IConns}) ->
+    MGroups = [{G, Nis} || {G, Nis, _} <- sd_model:groups(Model), lists:member(N, Nis)],
+    MNames = [{G, Ns} || {G, Nis, Ns} <- sd_model:groups(Model), lists:member(N, Nis)],
+    {N, _, MConns, _} = sd_model:node_record(N, Model),
+    [{N, c1_membership, {model, MGroups}, {impl, IGroups}} || MGroups =/= IGroups] ++
+    [{N, c2_namespace, {model, MNames}, {impl, INames}}
+     || is_list(IGroups), MGroups =:= IGroups, MNames =/= INames] ++
+    [{N, c3_connections_missing, MConns -- IConns} || (MConns -- IConns) =/= []].
+
+%% Quiescence: global on every member knows every other member of each of
+%% its groups. Not part of the conformance relation (M has no such notion);
+%% it is the harness's "system at rest" condition before the next command,
+%% so that the O5 race cannot fire (spec/deviations.yml). The probe is
+%% 19.3-specific (global:get_known_s_group/1); a port must supply an
+%% equivalent or the harness falls back to eager mode.
+%% {ok, LatencyMs} | {error, NotQuiescent}
+await_quiescent(Model, TimeoutMs) ->
+    T0 = erlang:monotonic_time(millisecond),
+    quiescent_loop(Model, T0, T0 + TimeoutMs).
+
+quiescent_loop(Model, T0, Deadline) ->
+    Lagging = [{N, G, Missing}
+               || {G, Nis, _} <- sd_model:groups(Model), N <- Nis,
+                  Missing <- [(Nis -- [N]) -- known(N, G)], Missing =/= []],
+    case Lagging of
+        [] -> {ok, erlang:monotonic_time(millisecond) - T0};
+        _ ->
+            case erlang:monotonic_time(millisecond) > Deadline of
+                true -> {error, {not_quiescent, Lagging}};
+                false -> timer:sleep(?POLL_MS), quiescent_loop(Model, T0, Deadline)
+            end
+    end.
+
+known(N, G) ->
+    case rpc:call(N, global, get_known_s_group, [G]) of
+        L when is_list(L) -> L;
+        _ -> []
+    end.
+
+%% {ok, LatencyMs} | {error, Diff}
+await_conformance(Model, PidMaps, TimeoutMs) ->
+    T0 = erlang:monotonic_time(millisecond),
+    await_loop(Model, PidMaps, T0, T0 + TimeoutMs).
+
+await_loop(Model, PidMaps, T0, Deadline) ->
+    Obs = observe(PidMaps),
+    case diff(Model, Obs, sd_pbt_cluster:sut_nodes()) of
+        [] ->
+            {ok, erlang:monotonic_time(millisecond) - T0};
+        Diff ->
+            case erlang:monotonic_time(millisecond) > Deadline of
+                true -> {error, Diff};
+                false -> timer:sleep(?POLL_MS), await_loop(Model, PidMaps, T0, Deadline)
+            end
+    end.

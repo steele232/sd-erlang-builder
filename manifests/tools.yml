@@ -1,0 +1,7 @@
+# Pinned verification tooling (fetched by bin/sd-fetch-tools, not committed).
+proper:
+  repository: https://github.com/proper-testing/proper.git
+  tag: v1.3
+  sha: f2b7b81666b21707244a40857cf50f4362b6e3c2
+  license: GPL-3.0-or-later (test tooling only; never shipped in runtime images)
+  why_this_version: last PropEr release supporting OTP 17-21 (historical runtime is OTP 20)

@@ -8,10 +8,17 @@ historical_quickcheck:
   executable: no
   reason: the D3.3 eqc_statem model is not in the public source mirror
 proper_port:
-  executable: no
-  status: not started (next milestone)
+  executable: yes
+  location: test/pbt/sd_pbt_statem.erl (bin/sd-pbt)
+  model: spec/model/sd_model.erl (executable transcription of D3.3 ch. 4; errata in spec/model/ERRATA.md)
+  status: >-
+    reconstruction of the D3.3/AST'14 eqc_statem setup (14 nodes, 12 normal + 2 hidden,
+    Fig. 5.4 weights). Not the original model. Quiescent-mode campaign on 19.3
+    (10x50): 7 pass; failures all registered (O6, Q1, Q2).
 tla_model:
-  status: not started (next milestone)
+  executable: yes
+  location: spec/tla/SGroupNames.tla (bin/sd-tla)
+  status: reproduces the O5 mechanism shape; lock/backfill fixes verified at 3 nodes x 2 names
 demo_scenario:
   executable: yes
   location: demo/src/sd_demo_scenario.erl

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Model-conformance testing: PropEr state machine (sd_pbt_statem) checking a
+# runtime against the executable RELEASE semantics (spec/model/sd_model.erl).
+#
+#   bin/sd-pbt [NUMTESTS] [RUNTIME_TAG]       default 20, localhost/sd-erlang:19.3-reference
+#   bin/sd-pbt replay FILE [RUNTIME_TAG]      re-run a stored counterexample
+#   bin/sd-pbt model                          model self-tests only (host OTP)
+#   bin/sd-pbt campaign RUNS N [RUNTIME_TAG]  failure profile: RUNS x N cases, no shrink
+#   bin/sd-pbt eval 'EXPR' [RUNTIME_TAG]      run an Erlang expression on the driver
+#                                             e.g. 'sd_pbt_o5:run(20, 120000)'
+#
+# SD_PBT_MODE=quiescent (default) waits for global group knowledge to settle
+# before each command; eager does not (exposes deviation O5).
+# SD_PBT_CONVERGE_MS sets the eventual-equality deadline (default 10000).
+# Reports land in test-results/pbt/. 14 SUT nodes + a hidden driver run in one
+# container on an --internal network.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OUT="$ROOT/test-results/pbt"
+SECRET=sd-pbt-cookie
+
+if [ "${1:-}" = model ]; then
+  E="$(mktemp -d)"
+  erlc -Wall -o "$E" "$ROOT/spec/model/sd_model.erl" "$ROOT/spec/model/sd_model_tests.erl"
+  exec erl -noshell -pa "$E" -eval 'halt(case eunit:test(sd_model_tests) of ok -> 0; _ -> 1 end).'
+fi
+
+MODE=run
+if [ "${1:-}" = replay ]; then MODE=replay; FILE="${2:?replay FILE}"; shift 2; fi
+if [ "${1:-}" = campaign ]; then MODE=eval; USER_EXPR="sd_pbt:campaign(${2:?RUNS}, ${3:?N})"; shift 3; fi
+if [ "${1:-}" = eval ]; then MODE=eval; USER_EXPR="${2:?eval EXPR}"; shift 2; fi
+NUMTESTS="${1:-20}"
+RUNTIME="${2:-localhost/sd-erlang:19.3-reference}"
+[ "$MODE" != run ] && RUNTIME="${1:-localhost/sd-erlang:19.3-reference}"
+
+RUNTIME_ID="$(podman image inspect "$RUNTIME" --format '{{.Id}}')"
+TAG="localhost/sd-pbt:${RUNTIME##*:}"
+podman build --quiet --build-arg RUNTIME_IMAGE="$RUNTIME_ID" \
+  -f "$ROOT/containers/pbt/Containerfile" -t "$TAG" "$ROOT" >/dev/null
+echo "harness $TAG on runtime $RUNTIME ($RUNTIME_ID)"
+
+mkdir -p "$OUT"
+podman secret exists "$SECRET" || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' \
+  | podman secret create "$SECRET" - >/dev/null
+podman network exists sd-pbt || podman network create --internal sd-pbt >/dev/null
+
+if [ "$MODE" = replay ]; then
+  EXPR="sd_pbt:replay(\"/pbt/out/$(basename "$FILE")\")"
+elif [ "$MODE" = eval ]; then
+  EXPR="$USER_EXPR"
+else
+  EXPR="sd_pbt:run($NUMTESTS)"
+fi
+
+podman run --rm --init --network sd-pbt --hostname pbt.sd.lab \
+  --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+  -e SD_RUNTIME_IMAGE_ID="$RUNTIME_ID" \
+  -e SD_PBT_CONVERGE_MS="${SD_PBT_CONVERGE_MS:-10000}" \
+  -e SD_PBT_MODE="${SD_PBT_MODE:-quiescent}" \
+  -v "$OUT:/pbt/out" \
+  "$TAG" erl -noshell -hidden -name driver@pbt.sd.lab -pa /pbt/ebin -eval "
+    R = (catch $EXPR),
+    halt(case R of ok -> 0; true -> 0; _ -> io:format(\"~p~n\", [R]), 1 end)."

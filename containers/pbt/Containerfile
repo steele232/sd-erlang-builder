@@ -1,0 +1,16 @@
+# Model-conformance harness (PropEr + executable semantics) layered on a
+# runtime image referenced by ID. PropEr (GPLv3) is test tooling only.
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+
+COPY vendor/proper /pbt/proper
+RUN cd /pbt/proper && ./rebar compile >/dev/null
+
+COPY spec/model /pbt/src/model
+COPY test/pbt /pbt/src/pbt
+RUN mkdir -p /pbt/ebin /pbt/out \
+ && erlc -Werror -o /pbt/ebin /pbt/src/model/sd_model.erl \
+ && erlc -Werror -I /pbt/proper/include -I /pbt/src/pbt -pa /pbt/proper/ebin -o /pbt/ebin /pbt/src/pbt/*.erl
+
+ENV ERL_LIBS=/pbt
+WORKDIR /pbt

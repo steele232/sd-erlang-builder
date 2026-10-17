@@ -7,3 +7,5 @@
 /demo/ebin/
 *.beam
 erl_crash.dump
+/test-results/
+/vendor/proper/

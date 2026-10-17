@@ -1,0 +1,173 @@
+# Deviation register.
+#
+# Every known difference between the layers S (design), M (semantics) and
+# I (19.3 implementation), and every intentional difference a port introduces
+# relative to I. A port is "historically faithful" iff its differential traces
+# match I except for entries here with `port_policy: may_differ` that a human
+# has approved. Changes to this file are oracle changes: never in the same
+# change as production code (handoff guide, "AI may never modify the oracle").
+#
+# fields:
+#   id, layers (which pair differs), source, summary
+#   fidelity_target: I | M | S          what a port must reproduce
+#   port_policy: must_match | may_differ | undecided
+#   normalization: how the differential harness compares it (if anything)
+
+- id: R1
+  layers: [M, I]
+  source: AST14 §5
+  summary: send/3 on unknown name returns {badarg, {Group, Name, Msg}}; M says undefined
+  fidelity_target: I
+  port_policy: must_match
+  normalization: none
+
+- id: R2
+  layers: [M, I]
+  source: AST14 §5
+  summary: unregister_name/2 by a non-member returns {no, cannot_unregister_from_remote_group}; M says True
+  fidelity_target: I
+  port_policy: must_match
+  normalization: none
+
+- id: R3
+  layers: [M, I]
+  source: D3.3 §5.2
+  summary: after group removal, actual state converges to the abstract state only eventually (60 s timeout + error report)
+  fidelity_target: M
+  port_policy: may_differ        # converging faster is acceptable; diverging permanently is not
+  normalization: compare after convergence deadline, not instantaneously
+
+- id: O1
+  layers: []
+  source: JPDC16 §3.1.4; observed in demo
+  summary: remove_nodes/2 keeps existing connections (logical disconnect only)
+  fidelity_target: I
+  port_policy: must_match
+  normalization: none
+
+- id: O2
+  layers: [M]
+  source: observed (3-node probe)
+  summary: links between nodes sharing no group are hidden (absent from nodes(), no shared namespace)
+  fidelity_target: I
+  port_policy: must_match
+  normalization: none
+
+- id: O3
+  layers: [S, I]
+  source: observed (demo15 move step)
+  summary: a link created before two nodes share a group stays hidden after they join one; add_nodes/2 itself creates such a link
+  fidelity_target: undecided
+  port_policy: undecided         # needs a human decision; until then the harness reports, never asserts
+  normalization: report-only
+
+- id: O4
+  layers: [M, I]
+  source: observed (probe4) + s_group.erl whereis_name/2 -> global_search
+  summary: whereis_name/2 and send/3 misses search other groups' nodes and leave hidden links; M defines a pure lookup returning undefined for non-members
+  fidelity_target: I
+  port_policy: must_match
+  normalization: none
+
+- id: O5
+  layers: [S, M, I]
+  source: observed (bin/sd-demo15 repro, 3/3 boots)
+  summary: >-
+    group-scoped registration multicasts only to global:get_known_s_group/1 at that
+    instant. If it lands while global is part-way through syncing a freshly formed
+    group, the name can stay missing on some members permanently; s_group:sync/0
+    does not repair it. Registering before any sync, or after sync completes, is fine.
+  evidence: >-
+    demo15 boot repro 3/3 boots; sd-pbt shrunk counterexample (new_s_group over 7
+    nodes, then re_register_name); sd_pbt_o5:run(20, 120000) on 19.3: 17/20
+    converged in 106-1421 ms, 3/20 never converged in 120 s (2-3 of 7 holders).
+    Distinct from R3 (D3.3 reports eventual convergence after 60 s).
+  fidelity_target: S
+  port_policy: may_differ        # a port may fix this; the fix must be shown by sd_pbt_o5 on both runtimes
+  normalization: >-
+    the quiescent PBT mode waits for global group knowledge to settle before each
+    command (O5 cannot fire); the eager mode does not and is EXPECTED_FAIL on 19.3
+
+# ---- found by bin/sd-pbt (PropEr conformance vs. 19.3) ----
+
+- id: I1
+  layers: [M, I]
+  source: sd-pbt 2026-10-16 (shrunk: add_nodes(g1, [n3]) on n3, g1 absent); s_group.erl add_nodes/2
+  summary: >-
+    add_nodes/2 removes node() from the list first; if nothing is left it returns
+    {ok, Group, []} without checking that the caller is a member or that the group
+    exists. M says Error for a non-member. State is unchanged in both.
+  fidelity_target: I
+  port_policy: must_match
+  normalization: when usort(Nodes) -- [Caller] == [], {ok, G, []} maps to M's error (no state change)
+
+- id: Q1
+  layers: [S, M, I]
+  source: sd-pbt quiescent run 2026-10-16 (test-results/pbt/pbt-20261017T062607Z-fail.eterm)
+  summary: >-
+    After new_s_group over 9 nodes, membership and connections conformed, but
+    global on one member (n7) never synced with the rest of the group within
+    10 s (get_known_s_group/1 empty both ways). Every later registration in the
+    group would miss that node. Resembles RELEASE R4 ("expected nodeup never
+    arrived"), which RELEASE reported fixed.
+  evidence: 1 occurrence in ~76 cases (~760 commands); 0/30 deterministic replays (rare race)
+  fidelity_target: S
+  port_policy: may_differ        # a port may fix it; frequency is tracked by `bin/sd-pbt campaign`
+  normalization: none (counts as a failure kind in campaign profiles)
+
+- id: I2
+  layers: [M, I]
+  source: sd-pbt campaign 2026-10-16 run 2 (pbt-20261017T062946Z-fail.eterm); s_group.erl handle_call remove_nodes
+  summary: >-
+    remove_nodes/2 removes the intersection of the given list with the group's
+    members and returns ok when the caller is a member and not in the list. M
+    returns False (no change) unless every listed node is a member.
+  fidelity_target: I
+  port_policy: must_match
+  normalization: test/pbt/sd_pbt_impl.erl step(remove_nodes)
+
+- id: Q2
+  layers: [S, M, I]
+  source: sd-pbt campaign 2 run 6 (pbt-20261017T063946Z-fail.eterm); deterministic repro test/pbt/sd_pbt_q2.erl
+  summary: >-
+    Removing a node from one s_group breaks global's knowledge of it in another
+    overlapping s_group. With g1={A,B,C}, g2={B,C}, A:remove_nodes(g1,[C]) leaves B
+    and C still members of g2 and still connected, but get_known_s_group(g2) is []
+    on both, so later g2 registrations cannot replicate between them. Violates S1/S4
+    (groups are independent) and crash/change isolation.
+  root_cause: >-
+    s_group.erl handle_call({remove_nodes_check, ...}) calls
+    disconnect_nodes(NodesToRmv) unconditionally (global nodedown for every removed
+    node). The initiator's path computes NodesKeepConnected (nodes still shared via
+    other groups) and disconnects only the rest; the check path does not.
+  evidence: sd_pbt_q2:run(5) on 19.3 -> 5/5 lost
+  fidelity_target: S
+  port_policy: may_differ        # a port should fix it; sd_pbt_q2 must report 0/N on the port
+  normalization: failure kind {not_quiescent, remove_nodes} in campaign profiles
+
+- id: O6
+  layers: [S, M, I]
+  source: sd-pbt campaign 2 run 1 (pbt-20261017T063504Z-fail.eterm)
+  summary: >-
+    A name registered in a group before add_nodes/2 never reached one of the newly
+    added members (n7 of n3,n7,n9) within 10 s, while the others received it.
+    Join-time back-fill can be lost. The TLA+ model SGroupNames does not cover
+    it: the name predates the sync, so the snapshot hypothesis does not explain it.
+    Candidate cause: add_nodes logically disconnects the joining nodes before
+    reconnecting, which may abort the in-flight sync.
+  evidence: 1/10 campaign runs (10x50 cases, quiescent mode)
+  fidelity_target: S
+  port_policy: may_differ
+  normalization: failure kind {conformance, add_nodes, [c2_namespace]} in campaign profiles
+
+- id: H1-retracted
+  layers: []
+  source: campaign 1 run 3
+  summary: >-
+    Suspected "hidden initiator does not interconnect members". Retracted: it
+    occurred while the harness container was exhausting its pids limit (zombie
+    BEAMs; fixed with podman --init), passed 10/10 replays, and did not recur in
+    campaign 2.
+  fidelity_target: none
+  port_policy: none
+  normalization: none

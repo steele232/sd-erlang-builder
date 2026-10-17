@@ -1,0 +1,41 @@
+# Primary sources that define SD Erlang as specified by the RELEASE project.
+# PDFs are kept (not committed) under archive/spec-sources/; retrieved 2026-10-16.
+sources:
+  d33:
+    title: "Scalable SD Erlang Reliability Model (RELEASE D3.3, Glasgow TR-2014-004)"
+    authors: Chechina, Li, Trinder, Thompson et al.
+    date: 2014-12
+    url: https://www.dcs.gla.ac.uk/research/sd-erlang/release-13-d33.pdf
+    sha256: 759225397b717e5f88d81b906489f7e4722d80ba9924ff9022ba9c437a31873e
+    role: normative operational semantics (ch. 4), validation method (ch. 5), restart + duplicate names (ch. 2-3)
+  ast14:
+    title: "Improved Semantics and Implementation through Property-Based Testing with QuickCheck (AST'14)"
+    authors: Huiqing Li, Simon Thompson
+    doi: 10.1145/2593501.2593509
+    url: https://kar.kent.ac.uk/42307/1/icsews14astm-final.pdf
+    sha256: af90613178c4749cdecb7c35b6e7a55824bda305e7f24984734accdec2872a53
+    role: eqc_statem methodology; catalogue of spec/impl bugs and accepted divergences
+  jpdc16:
+    title: "Improving the network scalability of Erlang (J. Parallel Distrib. Comput. 90-91, 2016)"
+    authors: Chechina, Li, Ghaffari, Thompson, Trinder
+    doi: 10.1016/j.jpdc.2016.01.002
+    url: https://www.dcs.gla.ac.uk/~natalia/sd-erlang-improving-jpdc-16.pdf
+    sha256: a9ac67ce415d48ab9e54afef9f98aca3373f052408d88de856381a74f6c4697e
+    role: design rationale and informal API contract (tables 1-3, sec. 3)
+  toplas17:
+    title: "Scaling Reliably: Improving the Scalability of the Erlang Distributed Actor Platform (ACM TOPLAS 2017)"
+    authors: Trinder, Chechina, Papaspyrou, Sagonas, Thompson et al.
+    url: https://arxiv.org/pdf/1704.07234
+    sha256: 46e67de70d2ed40efbc2d4ffdd773e91c53221eef1d953fa1c499a66d97b2399
+    role: final summary of semantics (fig. 14-15) and validation results (sec. V.iii)
+  euc14_slides:
+    title: "SD Erlang (Erlang User Conference 2014 slides)"
+    authors: Natalia Chechina
+    url: https://www.dcs.gla.ac.uk/~natalia/chechina-sd-erlang-euc14.pdf
+    sha256: 509d70acf5aa3d1ce89e157adcc873b9027d627cdb9f4677d101514031a2ca95
+    role: informal background
+  glasgow_howto:
+    url: https://www.dcs.gla.ac.uk/research/sd-erlang/howto.html
+    role: build instructions, six-file statement, API list (cited by the handoff guide)
+not_found:
+  - the D3.3 eqc_statem model source (~1,100 LOC per AST'14); not in release-project/otp
