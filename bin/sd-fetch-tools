@@ -16,3 +16,11 @@ mkdir -p "$ROOT/vendor"
 git -C "$ROOT/archive/proper/proper" archive --format=tar --prefix=proper/ "$PROPER_SHA" \
   | tar -x -C "$ROOT/vendor"
 echo "vendor/proper at $PROPER_SHA"
+
+PROPER_MODERN_SHA=5640d0715d4b346676267504d8e84398e2a29f75   # v1.5.0, for OTP >= 22
+git -C "$ROOT/archive/proper/proper" fetch -q origin "refs/tags/v1.5.0:refs/tags/v1.5.0" || true
+test "$(git -C "$ROOT/archive/proper/proper" rev-parse 'v1.5.0^{commit}')" = "$PROPER_MODERN_SHA"
+rm -rf "$ROOT/vendor/proper-1.5"; mkdir -p "$ROOT/vendor/proper-1.5"
+git -C "$ROOT/archive/proper/proper" archive --format=tar --prefix=proper/ "$PROPER_MODERN_SHA" \
+  | tar -x -C "$ROOT/vendor/proper-1.5"
+echo "vendor/proper-1.5 at $PROPER_MODERN_SHA"

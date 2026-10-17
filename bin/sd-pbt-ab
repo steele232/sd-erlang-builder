@@ -14,9 +14,10 @@ OUT="$ROOT/test-results/ab-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
 # Build each arm's harness ONCE from the current source and pin it by ID:
 # later edits to the working tree cannot change the harness mid-experiment.
 harness_for() {
-  local rid; rid="$(podman image inspect "$1" --format '{{.Id}}')"
-  podman build --quiet --build-arg RUNTIME_IMAGE="$rid" \
-    -f "$ROOT/containers/pbt/Containerfile" "$ROOT"
+  local rid rel cf; rid="$(podman image inspect "$1" --format '{{.Id}}')"
+  rel="$(podman run --rm "$rid" erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().')"
+  cf="$ROOT/containers/pbt/Containerfile"; [ "${rel:-0}" -ge 22 ] 2>/dev/null && cf="$ROOT/containers/pbt/Containerfile.modern"
+  podman build --quiet --build-arg RUNTIME_IMAGE="$rid" -f "$cf" "$ROOT"
 }
 HA="$(harness_for "$A")"; HB="$(harness_for "$B")"
 printf 'A=%s harness=%s\nB=%s harness=%s\nsource=%s\n' "$A" "$HA" "$B" "$HB" \

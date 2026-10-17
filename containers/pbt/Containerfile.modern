@@ -1,0 +1,19 @@
+# Model-conformance harness for MODERN runtimes (OTP >= 22), e.g. a port
+# candidate or stock OTP 29.1.2. Same sources as containers/pbt/Containerfile,
+# with PropEr v1.5.0 (manifests/tools.yml) instead of v1.3. Test tooling only.
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+
+COPY vendor/proper-1.5/proper /pbt/proper-src
+RUN cd /pbt/proper-src && rebar3 compile >/dev/null \
+ && mkdir -p /pbt/proper && cp -r _build/default/lib/proper/ebin /pbt/proper/ebin \
+ && cp -r include /pbt/proper/include
+
+COPY spec/model /pbt/src/model
+COPY test/pbt /pbt/src/pbt
+RUN mkdir -p /pbt/ebin /pbt/out \
+ && erlc -Werror -o /pbt/ebin /pbt/src/model/sd_model.erl \
+ && erlc -Werror -I /pbt/proper/include -I /pbt/src/pbt -pa /pbt/proper/ebin -o /pbt/ebin /pbt/src/pbt/*.erl
+
+ENV ERL_LIBS=/pbt
+WORKDIR /pbt

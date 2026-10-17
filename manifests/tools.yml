@@ -5,3 +5,9 @@ proper:
   sha: f2b7b81666b21707244a40857cf50f4362b6e3c2
   license: GPL-3.0-or-later (test tooling only; never shipped in runtime images)
   why_this_version: last PropEr release supporting OTP 17-21 (historical runtime is OTP 20)
+proper_modern:
+  repository: https://github.com/proper-testing/proper.git
+  tag: v1.5.0
+  sha: 5640d0715d4b346676267504d8e84398e2a29f75
+  license: GPL-3.0-or-later (test tooling only)
+  used_for: runtimes with OTP >= 22 (port candidates, stock OTP 29.1.2); containers/pbt/Containerfile.modern

@@ -56,8 +56,11 @@ launch(Node, Type) ->
     Stamp = integer_to_list(erlang:system_time(millisecond)),
     Dump = "/pbt/out/erl_crash-" ++ Name ++ "-" ++ Stamp ++ ".dump",
     Log = "/pbt/out/log-" ++ Name ++ "-" ++ Stamp ++ ".log",
+    %% SD_PBT_NODE_ARGS: extra erl args a runtime image needs on every SUT node
+    %% (e.g. a library-only port: "-kernel connect_all false -pa ... -s ...").
+    Extra = os:getenv("SD_PBT_NODE_ARGS", ""),
     Cmd = "ERL_CRASH_DUMP=" ++ Dump ++ " erl -detached -noshell -name " ++ Name ++ "@" ++ ?HOST ++ Hidden ++
-          " -pa /pbt/ebin -kernel error_logger '{file,\"" ++ Log ++ "\"}'",
+          " -pa /pbt/ebin -kernel error_logger '{file,\"" ++ Log ++ "\"}' " ++ Extra,
     _ = os:cmd(Cmd),
     ok.
 

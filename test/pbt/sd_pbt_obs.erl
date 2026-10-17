@@ -45,12 +45,28 @@ observe_node(N, PidMaps, Driverless) ->
     #{groups => Groups, names => Names, conns => Conns}.
 
 group_names(N, G, PidMaps) ->
-    All = case rpc:call(N, global, registered_names, [all_names]) of
-              L when is_list(L) -> L;
-              _ -> []
-          end,
-    lists:sort([{Name, sd_pbt_cluster:to_ref(rpc:call(N, global, whereis_name, [G, Name]), PidMaps)}
-                || {G1, Name} <- All, G1 =:= G]).
+    case is_port_runtime(N) of
+        true ->
+            %% Ports: observe through the public s_group API only.
+            Names = case rpc:call(N, s_group, registered_names, [{s_group, G}]) of
+                        L when is_list(L) -> [Nm || {G1, Nm} <- L, G1 =:= G];
+                        _ -> []
+                    end,
+            lists:sort([{Name, sd_pbt_cluster:to_ref(rpc:call(N, s_group, whereis_name, [G, Name]), PidMaps)}
+                        || Name <- Names]);
+        false ->
+            %% 19.3 reference: unchanged observation (baselines stay valid).
+            All = case rpc:call(N, global, registered_names, [all_names]) of
+                      L when is_list(L) -> L;
+                      _ -> []
+                  end,
+            lists:sort([{Name, sd_pbt_cluster:to_ref(rpc:call(N, global, whereis_name, [G, Name]), PidMaps)}
+                        || {G1, Name} <- All, G1 =:= G])
+    end.
+
+%% A port candidate exports s_group:known_peers/1 (its quiescence probe).
+is_port_runtime(N) ->
+    rpc:call(N, erlang, function_exported, [s_group, known_peers, 1]) =:= true.
 
 %% [] when I ~ M, otherwise a list of human-readable differences.
 diff(Model, Obs, Nodes) ->
@@ -114,7 +130,11 @@ evidence_text() ->
                                             pid_fields => LockerInfo}, 200])).
 
 known(N, G) ->
-    case rpc:call(N, global, get_known_s_group, [G]) of
+    Probe = case is_port_runtime(N) of
+                true -> {s_group, known_peers};
+                false -> {global, get_known_s_group}
+            end,
+    case rpc:call(N, element(1, Probe), element(2, Probe), [G]) of
         L when is_list(L) -> L;
         _ -> []
     end.
