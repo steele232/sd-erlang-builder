@@ -512,11 +512,19 @@
     repair); (6) synthetic-nodeup overtaking disconnect_node (patch 0008
     reorders sends: 3/10 vs 2/8, no effect; in shape (a) the last s_group event
     per peer is already nodeup).
-    Observed fact for shape (a): global_name_server on stuck nodes receives
-    init_connect from every peer but NO nodeup at all, although s_group
-    received synthetic nodeups and links are visible. Next: trace what s_group
-    does with those nodeups (handle_node_up -> {nodeup_s, CmnGroups, Node} to
-    global?), which is the remaining gap.
+    CORRECTION: the earlier "global receives no nodeup at all" was an artifact of
+    the tracer's classifier, which did not recognise s_group's forwarding message
+    {nodeup_s, CmnGroups, Node}. Re-measured (shape b, step 11, stuck n8):
+    global_name_server DID receive nodeup_s for its g6 peers (28) and init_connect
+    (25), plus 16 nodedowns (logical) and 8 disconnect_node in s_group, yet only
+    ONE sync reached lock_is_set/exchange. Together with shape (a)'s new_resolver
+    without completion: syncs are started and then abandoned before the lock
+    phase.
+  next_step: >-
+    Instrument the window between nodeup_s and lock_is_set: handle_node_up_s /
+    isknown_nodeup decisions, the locker's add_node/cancel calls, and whether a
+    logical {nodedown, Peer} arriving after nodeup_s cancels the started sync
+    (cancel_locker) without a later nodeup to restart it.
   fidelity_target: S
   port_policy: may_differ
   normalization: failure kind {not_quiescent, new_s_group}

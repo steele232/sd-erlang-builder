@@ -186,6 +186,7 @@ classify_for(Who, Msg) ->
             classify(Msg)
     end.
 
+classify({nodeup_s, Groups, N}) -> {nodeup_s, N, Groups};   %% s_group -> global forwarding
 classify({nodeup, N}) -> {nodeup, N};
 classify({nodeup, G, N}) -> {nodeup, G, N};
 classify({nodedown, N}) -> {nodedown, N};
