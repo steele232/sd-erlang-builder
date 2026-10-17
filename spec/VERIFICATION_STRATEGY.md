@@ -106,6 +106,15 @@ timestamps and ports; treat orderings as sets wherever the API returns sets.
 
 Nondeterministic observables (O5, Q1) are not compared trace-by-trace. They go to L4.
 
+**Outcome sets (N1).** Some sequences have several legitimate reference
+outcomes. Measured self-agreement was 26–28/30 sequences, with sequences 24
+and 30 nondeterministic even with a 10 s stability window.
+
+So golden traces are recorded K times on the reference, and
+`sd_diff:compare_set/2` accepts a candidate trace if it equals *any* reference
+outcome. It also reports how many distinct outcomes each sequence has. The
+stability window (3.5 s) must exceed `global`'s locker retry interval (≤ 3 s).
+
 ## L3 — Scenario suites
 
 `bin/sd-demo` (3 nodes, 10 checks) and `bin/sd-demo15` (15 nodes, 10 checks,

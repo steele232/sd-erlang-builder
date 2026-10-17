@@ -17,7 +17,7 @@
 
 -include("sd_compat.hrl").
 
--export([sample_corpus/3, record/2, compare/2, run_sequence/1, observe/0,
+-export([sample_corpus/3, record/2, compare/2, compare_set/2, run_sequence/1, observe/0,
          final_states/3]).
 
 -define(TAB, sd_pbt).
@@ -80,6 +80,27 @@ compare(CorpusFile, GoldenFile) ->
         [] -> ok;
         _ -> {error, [I || {I, _} <- Bad]}
     end.
+
+%% Outcome-set comparison (deviation N1: some sequences have several
+%% legitimate reference outcomes). GoldenFiles are K reference recordings of
+%% the same corpus; a run passes a sequence if its trace equals ANY of them.
+%% Also reports, per sequence, how many distinct reference outcomes exist.
+compare_set(CorpusFile, GoldenFiles) ->
+    Goldens = [begin {ok, [#{traces := T}]} = file:consult(F), T end || F <- GoldenFiles],
+    Seqs = load_corpus(CorpusFile),
+    PerSeq = lists:zip(lists:seq(1, length(Seqs)),
+                       lists:zip(Seqs, transpose(Goldens))),
+    Results = [{I, run_sequence(S), lists:usort(Gs)} || {I, {S, Gs}} <- PerSeq],
+    Nondet = [{I, length(Set)} || {I, _, Set} <- Results, length(Set) > 1],
+    Bad = [I || {I, T, Set} <- Results, not lists:member(T, Set)],
+    io:format("~noutcome-set differential vs ~p reference recordings: ~p/~p sequences inside the set~n"
+              "  nondeterministic reference sequences (distinct outcomes): ~p~n"
+              "  outside the set: ~p~n",
+              [length(GoldenFiles), length(Results) - length(Bad), length(Results), Nondet, Bad]),
+    case Bad of [] -> ok; _ -> {error, Bad} end.
+
+transpose([[] | _]) -> [];
+transpose(Ls) -> [[hd(L) || L <- Ls] | transpose([tl(L) || L <- Ls])].
 
 diff_trace(Trace, Golden) ->
     Steps = lists:zip(lists:seq(1, length(Trace)), lists:zip(Trace, Golden)),
