@@ -305,7 +305,9 @@
     test/corpus/c1-seq30.eterm (corpus-v1 sequence 30) run with
     sd_diff:crash_rate/3 under the L2 runner. Reference: a node crashes at step
     18 in 4/8 runs (2/3 golden recordings + 2/5). 0003 (C1a only): 1/6, still C1b.
-    0004 (C1a+C1b): 0/6.
+    0004 (C1a+C1b): 0/6. INTERLEAVED (pinned harness, 10+10 runs): reference
+    6/10 crash vs 0004 0/10, one-sided Fisher p = 0.0054. Both root causes
+    confirmed by intervention.
   trigger: >-
     Not reproduced deterministically (0/30 across 6 constructed variants in
     test/pbt/sd_pbt_c1.erl). In the captured crash the free peer's known list
