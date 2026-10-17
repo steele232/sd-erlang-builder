@@ -111,8 +111,8 @@
     sd_pbt_o5:run(25, 30000): reference 13/50 never converge (6/25 + 7/25);
     patched 0/25 never (max 432 ms). One-sided Fisher exact p ~ 0.006.
     BUT the L4 regression gate REJECTS this one-function fix: campaign 10x50 on the
-    patched image gives {not_quiescent,new_s_group} in 6/10 runs vs 1/10 on the
-    reference (p ~ 0.03). Some members never complete any group sync (e.g. n1,n5,n9
+    patched image gives {not_quiescent,new_s_group} in 6/10 runs vs 3/20 on the
+    pooled reference (two campaigns), one-sided Fisher p = 0.018. Some members never complete any group sync (e.g. n1,n5,n9
     isolated in g2). Retargeting the broadcast without stock's full merge protocol
     (symmetric partition broadcasts and lock cancellation for the peer's nodes)
     abandons in-flight syncs. Lesson for the port: implement the stock merge
@@ -186,6 +186,11 @@
     node). The initiator's path computes NodesKeepConnected (nodes still shared via
     other groups) and disconnects only the rest; the check path does not.
   evidence: sd_pbt_q2:run(5) on 19.3 -> 5/5 lost
+  experimental_fix: >-
+    patches/experimental/0002-remove_nodes_check-keep-shared-nodes.patch. Targeted:
+    sd_pbt_q2 0/5 lost. Regression gate: {not_quiescent,new_s_group} 4/10 vs 3/20
+    pooled reference, p = 0.14, not significant. Provisionally accepted as the fix
+    design for a port.
   fidelity_target: S
   port_policy: may_differ        # a port should fix it; sd_pbt_q2 must report 0/N on the port
   normalization: failure kind {not_quiescent, remove_nodes} in campaign profiles

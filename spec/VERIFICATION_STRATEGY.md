@@ -134,6 +134,21 @@ Acceptance for a port:
 - if a port claims to *fix* a defect (`port_policy: may_differ`), the dedicated
   characterization (`sd_pbt_o5`, …) must show it on both runtimes.
 
+Lessons from applying this to two experimental fixes (`patches/experimental/`):
+- **Pool and interleave the reference.** Two 10-run reference campaigns hours
+  apart gave 7/10 and 5/10 passing runs. A single reference campaign is not a
+  stable baseline: measure the reference in the same session as the candidate,
+  and pool reference runs.
+- **Campaign counts are censored.** Each run stops at its first failure, so
+  failure kinds mask each other. A kind's run-rate is a lower bound, and a
+  candidate that removes one kind can raise another's apparent rate. Use more
+  runs, or a continue-after-failure mode (not yet built), before rejecting on a
+  borderline p.
+- **Judge every fix twice.** The targeted repro must improve, and the profile
+  must not regress. Fix 0001 passed the first test (O5 0/25 vs 13/50,
+  p = 0.003) and failed the second (6/10 vs 3/20, p = 0.018). Fix 0002 passed
+  both.
+
 ## L5 — Free-node equivalence with stock OTP
 
 S2 says free nodes behave exactly like distributed Erlang, and this repo already

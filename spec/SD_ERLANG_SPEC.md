@@ -127,13 +127,15 @@ command weights in [D3.3] Fig. 5.4 (also in [AST14] Fig. 6, without
 | O2 | link between nodes sharing no group is **hidden** (not in `nodes()`, no namespace) | conformant (S3 non-transitive) | silent (M has no visibility) | conformant; M under-specifies |
 | O3 | a link created *before* two nodes share a group stays hidden after they join one (`add_nodes/2` creates one) | ? | M says nodes are *interconnected*, and visibility isn't modelled | **spec gap**, needs decision |
 | O4 | a `whereis_name/2` / `send/3` miss searches other groups and leaves hidden links | diverges from M (pure lookup) | divergent | **I-behaviour beyond M**; fidelity target is I |
-| O5 | group name registered before `global` knows the whole group can stay missing on some members forever; `s_group:sync/0` doesn't repair it (`bin/sd-demo15 repro`: 3/3 boots) | violates S4 (synchronised between group nodes) | violates M (namespace replicated on all members) | **defect**, probably related to R3 |
+| O5 | group name registered before `global` knows the whole group can stay missing on some members forever (`sd_pbt_o5`: 13/50 trials) | violates S4 | violates M | **defect, root cause found**: `resolved_s/6` broadcasts learned names to the *peer's* partition instead of its own (stock `resolved/5` abcasts to `Known`); confirmed by trace and by intervention |
 | — | restarted node's pids can equal pre-crash pids | n/a | n/a | OTP 20 property, not SD |
 | I1 | `add_nodes(G, [Caller])` returns `{ok, G, []}` with no membership check (`bin/sd-pbt`) | silent | diverges (M: Error) | I-behaviour, value only |
 | I2 | `remove_nodes/2` removes the *intersection* with the members and returns `ok` (`bin/sd-pbt`) | silent | diverges (M: False, no change) | I-behaviour, **state** (adapter `sd_pbt_impl`) |
 | Q1 | after `new_s_group`, one member's `global` occasionally never syncs with the group (campaigns: 2/20 runs) | violates S4 | violates M | **defect**, cf. RELEASE R4 |
-| Q2 | `remove_nodes(g1, [C])` wipes `global`'s knowledge of C in *another* group shared with C (`sd_pbt_q2`: 5/5) | violates S1/S4 | violates M | **defect**, root cause: unconditional `disconnect_nodes` in `remove_nodes_check` |
-| O6 | a name registered before `add_nodes/2` can miss a newly added member (campaign: 1/10 runs) | violates S4 | violates M | **defect**, cause open (not explained by the O5 model) |
+| Q2 | `remove_nodes(g1, [C])` wipes `global`'s knowledge of C in *another* group shared with C (`sd_pbt_q2`: 5/5) | violates S1/S4 | violates M | **defect**, root cause: unconditional `disconnect_nodes` in `remove_nodes_check`; experimental fix 0002: 0/5 |
+| O6 | a name registered before `add_nodes/2` can miss a newly added member (campaign: 1/10 runs) | violates S4 | violates M | **defect**, very likely the O5 root cause (not yet trace-confirmed) |
+| F1 | on free nodes, a failed `global:register_name/2` returns `{no, Reason}`; stock returns `no` (L5: 2/20 sequences) | violates S2 | n/a | I-behaviour vs stock; port policy undecided |
+| N1 | free groups re-form nondeterministically after `delete_s_group/1` (2–3 distinct end states in 3 runs) | silent | M deterministic | I refines M nondeterministically; L2 uses outcome sets |
 
 ## 6. Consequences for "correct port"
 
