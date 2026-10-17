@@ -48,8 +48,14 @@ new_s_group(G, Nodes0) ->
         {false, _} -> {error, remote_s_group};
         {true, true} -> {error, s_group_name_is_in_use};
         {true, false} ->
-            [net_kernel:connect_node(N) || N <- Nodes, N =/= node()],
-            _ = multicall(Nodes, i_install, [G, Nodes, #{}]),
+            %% Install here first: while the initiator is still free, its
+            %% first link to a free member would start a free-mesh exchange
+            %% and leave that member with visible links to free nodes
+            %% (C4, test/corpus/l1-c4-joinrace.eterm).
+            ok = i_install(G, Nodes, #{}),
+            Others = Nodes -- [node()],
+            [net_kernel:connect_node(N) || N <- Others],
+            _ = multicall(Others, i_install, [G, Nodes, #{}]),
             {ok, G, Nodes}
     end.
 
