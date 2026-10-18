@@ -1,0 +1,373 @@
+From 6e329bf5d48aab042df9435b38a9119f8831e198 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan.steele232@gmail.com>
+Date: Sat, 17 Oct 2026 18:58:22 -0700
+Subject: [PATCH 2/2] SD Erlang s_groups: per-group partition prevention (POP1)
+ and partition merge (R-NS-1, U1)
+
+---
+ lib/kernel/src/s_group.erl | 256 +++++++++++++++++++++++++++++++------
+ 1 file changed, 217 insertions(+), 39 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 8c471dc..6a1dc26 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -47,16 +47,29 @@
+          get_own_nodes_with_errors/0]).
+ %% internal (called on other members)
+ -export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
+-         i_names/1, i_is_free/0]).
++         i_names/1, i_is_free/0, i_sync_set/1, i_connect_all/1, i_seqs/0,
++         i_merged/4]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+          code_change/3]).
+ 
+ -define(T, 15000).
+ -define(VIEW, s_group_view).
++-define(MERGE_TICK_MS, 2000).
+ 
+ %% groups :: #{G => [node()]}; names :: #{G => #{Name => pid()}};
+ %% mons :: #{reference() => {G, Name}}; conns :: #{node() => ConnectionId}
+--record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{}}).
++%% Per-group partition prevention (decision D-5 / POP1):
++%%   sync :: #{G => [node()]}   the members whose replicas are in step with
++%%                              this one (stored in ?VIEW as {{sync, G}, _});
++%%   seq :: #{node() => integer()} incarnation of the link to each node,
++%%                              bumped on every nodeup and nodedown;
++%%   heals :: #{{A, X} => Seq}  A's incarnation of its link to X when a merge
++%%                              covering both completed; older reports about
++%%                              that link are stale;
++%%   seen :: #{Report => true}  lost_connection reports already handled;
++%%   merging :: #{G => true}    a merge for G is running on this node.
++-record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{},
++             sync = #{}, seq = #{}, heals = #{}, seen = #{}, merging = #{}}).
+ 
+ start_link() ->
+     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+@@ -225,9 +238,9 @@ s_groups() ->
+ sync() -> ok.
+ info() -> [{state, synced}, {own_s_groups, own_s_groups()}].
+ 
+-%% Quiescence probe for the verification harness: group namespaces are
+-%% replicated explicitly, so knowledge equals membership.
+-known_peers(G) -> own_nodes(G) -- [node()].
++%% Quiescence probe for the verification harness: the members this node's
++%% replica of G is in step with.
++known_peers(G) -> in_sync(G).
+ 
+ add_attributes(As) -> gen_server:call(?MODULE, {add_attributes, As}).
+ registered_attributes() -> gen_server:call(?MODULE, attributes).
+@@ -284,6 +297,15 @@ i_delete(G, Name, Pid) -> gen_server:call(?MODULE, {delete, G, Name, Pid}, ?T).
+ i_lookup(G, Name) -> maps:get(Name, maps:get(G, all_names(), #{}), undefined).
+ i_names(G) -> maps:get(G, all_names(), #{}).
+ i_is_free() -> view_groups() =:= #{} andalso not hidden().
++i_sync_set(G) -> [node() | in_sync(G)].
++i_seqs() -> gen_server:call(?MODULE, seqs, ?T).
++i_merged(G, Union, Names, Stamps) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps}, ?T).
++%% Connect to every node of a prospective merged partition; returns the
++%% nodes still not connected.
++i_connect_all(Nodes) ->
++    Others = Nodes -- [node()],
++    _ = [net_kernel:connect_node(N) || N <- Others, not lists:member(N, nodes(connected))],
++    [N || N <- Others, not lists:member(N, nodes(connected))].
+ 
+ groups() -> view_groups().
+ all_names() -> gen_server:call(?MODULE, names, ?T).
+@@ -312,12 +334,32 @@ init([]) ->
+                                                           node_type => all}),
+                     Peers = lists:usort(lists:append(maps:values(Groups))) -- [node()],
+                     _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Peers] end),
++                    {ok, _} = timer:send_interval(?MERGE_TICK_MS, merge_tick),
+                     {ok, #st{groups = Groups,
+                              names = maps:map(fun(_, _) -> #{} end, Groups)}}
+             end
+     end.
+ 
+ handle_call(names, _F, S) -> {reply, S#st.names, S};
++handle_call(seqs, _F, S) -> {reply, S#st.seq, S};
++handle_call({merged, G, Union, Names, Stamps}, _F, S) ->
++    case lists:member(node(), Union) andalso maps:is_key(G, S#st.groups) of
++        true ->
++            Old = maps:get(G, S#st.names, #{}),
++            S1 = maps:fold(fun(Nm, _P, Acc) ->
++                                   case maps:is_key(Nm, Names) of
++                                       true -> Acc;
++                                       false -> del_name(G, Nm, Acc)
++                                   end
++                           end, S, Old),
++            S2 = maps:fold(fun(Nm, P, Acc) -> put_name(G, Nm, P, del_name_if_other(G, Nm, P, Acc)) end,
++                           S1, Names),
++            Heals = maps:fold(fun(K, V, Acc) -> maps:update_with(K, fun(O) -> max(O, V) end, V, Acc) end,
++                              S2#st.heals, Stamps),
++            {reply, ok, set_sync(G, Union -- [node()], S2#st{heals = Heals})};
++        false ->
++            {reply, ok, S}
++    end;
+ handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
+ handle_call({add_attributes, As}, _F, S) ->
+     {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
+@@ -330,7 +372,12 @@ handle_call({install, G, Members, Names}, _F, S) ->
+                                 S#st{names = maps:put(G, maps:get(G, S#st.names, #{}),
+                                                       S#st.names)}),
+                      maps:to_list(Names)),
+-    {reply, ok, S1};
++    %% The table was installed under the group lock to every member; those
++    %% connected now are in step. The merge tick brings in the rest.
++    Connected = nodes(connected),
++    InSync = [N || N <- Others, lists:member(N, Connected)],
++    self() ! merge_tick,
++    {reply, ok, set_sync(G, InSync, S1)};
+ handle_call({mesh, G}, _F, S) ->
+     %% D-1 (spec/deviations.yml O3): a link to a fellow member that is hidden
+     %% because it predates the shared group is re-established, so that it is
+@@ -349,19 +396,45 @@ handle_call({mesh, G}, _F, S) ->
+     {reply, ok, S};
+ handle_call({drop, G}, _F, S) ->
+     S1 = set_groups(maps:remove(G, S#st.groups), S#st{names = maps:remove(G, S#st.names)}),
+-    {reply, ok, S1};
++    ets:delete(?VIEW, {sync, G}),
++    {reply, ok, S1#st{sync = maps:remove(G, S1#st.sync)}};
+ handle_call({insert, G, Name, Pid, Mode}, _F, S) ->
+     S1 = case Mode of replace -> del_name(G, Name, S); none -> S end,
+     {reply, ok, put_name(G, Name, Pid, S1)};
+ handle_call({delete, G, Name, _Pid}, _F, S) ->
+     {reply, ok, del_name(G, Name, S)}.
+ 
+-handle_cast({merge, G, Names}, S) ->
+-    case maps:is_key(G, S#st.groups) of
+-        true -> {noreply, lists:foldl(fun({Nm, P}, Acc) -> merge_name(G, Nm, P, Acc) end,
+-                                      S, Names)};
+-        false -> {noreply, S}
++%% POP1 (decision D-5): A lost its link to X; X is reported for group G.
++%% Stock global's algorithm scoped to one group, with a logical removal: the
++%% receiver drops the far end from its in-sync set of G (and asks it to do
++%% the same); no link is cut.
++handle_cast({pop_lost, A, X, G, Seq} = Rep, S) ->
++    Stale = maps:get({A, X}, S#st.heals, -1) > Seq,
++    case maps:is_key(Rep, S#st.seen) orelse Stale orelse not maps:is_key(G, S#st.groups) of
++        true ->
++            {noreply, S};
++        false ->
++            S1 = S#st{seen = maps:put(Rep, true, S#st.seen)},
++            Fwd = maps:get(G, S1#st.sync, []) -- [A, X],
++            _ = [gen_server:cast({?MODULE, F}, Rep) || F <- Fwd],
++            V = case node() of X -> A; _ -> X end,
++            case lists:member(V, maps:get(G, S1#st.sync, [])) of
++                true ->
++                    gen_server:cast({?MODULE, V}, {pop_remove, node(), G}),
++                    {noreply, leave_partition(G, V, S1)};
++                false ->
++                    {noreply, S1}
++            end
+     end;
++handle_cast({pop_remove, R, G}, S) ->
++    {noreply, leave_partition(G, R, S)};
++handle_cast({merge_request, G, From}, S) ->
++    %% From does not consider this node in step in G: whatever this node
++    %% thinks, they are not; drop From here too and merge.
++    self() ! merge_tick,
++    {noreply, leave_partition(G, From, S)};
++handle_cast({merge_done, G}, S) ->
++    {noreply, S#st{merging = maps:remove(G, S#st.merging)}};
+ handle_cast({pid_down, G, Name, Pid}, S) ->
+     {noreply, del_pid_name(G, Name, Pid, S)};
+ %% Free namespace: Node answered that it is free; join global's partition
+@@ -404,13 +477,9 @@ handle_info({'DOWN', Ref, process, Pid, _}, S) ->
+         error -> {noreply, S}
+     end;
+ handle_info({nodeup, N, #{connection_id := CId} = Info}, S0) ->
+-    S = S0#st{conns = maps:put(N, CId, S0#st.conns)},
+-    %% Merge on join: push the names of this node's own processes, per shared
+-    %% group, to a member that has just connected.
+-    _ = [gen_server:cast({?MODULE, N},
+-                         {merge, G, [{Nm, P} || {Nm, P} <- maps:to_list(maps:get(G, S#st.names, #{})),
+-                                                node(P) =:= node()]})
+-         || {G, Members} <- maps:to_list(S#st.groups), lists:member(N, Members)],
++    S = bump(N, S0#st{conns = maps:put(N, CId, S0#st.conns)}),
++    %% A (re)connected fellow member is merged by the next tick (R-NS-1).
++    self() ! merge_tick,
+     _ = case maps:get(node_type, Info, visible) of
+             visible -> check_free(N, S);
+             hidden -> ok
+@@ -421,10 +490,26 @@ handle_info({nodedown, N, _Info}, S0) ->
+     %% this same nodedown (partition prevention), and must get the answer
+     %% that held for the lost connection. A later check_free/2 or leaving
+     %% the free namespace removes it.
+-    S = S0#st{conns = maps:remove(N, S0#st.conns)},
+-    Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S#st.names), {Nm, P} <- maps:to_list(Ns),
++    S1 = bump(N, S0#st{conns = maps:remove(N, S0#st.conns)}),
++    Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S1#st.names), {Nm, P} <- maps:to_list(Ns),
+                           node(P) =:= N],
+-    {noreply, lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S, Gone)};
++    S2 = lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S1, Gone),
++    %% POP1: report the lost link to the rest of each partition it was in.
++    Seq = maps:get(N, S2#st.seq),
++    S3 = lists:foldl(
++           fun(G, Acc) ->
++                   case lists:member(N, maps:get(G, Acc#st.sync, [])) of
++                       true ->
++                           Acc1 = set_sync(G, maps:get(G, Acc#st.sync) -- [N], Acc),
++                           _ = [gen_server:cast({?MODULE, R}, {pop_lost, node(), N, G, Seq})
++                                || R <- maps:get(G, Acc1#st.sync)],
++                           Acc1;
++                       false -> Acc
++                   end
++           end, S2, maps:keys(S2#st.groups)),
++    {noreply, S3};
++handle_info(merge_tick, S) ->
++    {noreply, merge_tick(S)};
+ handle_info(_, S) -> {noreply, S}.
+ 
+ terminate(_, _) -> ok.
+@@ -535,6 +620,102 @@ static_groups({ok, Defs}) when is_list(Defs) ->
+     end;
+ static_groups({ok, Other}) -> {error, {bad_s_groups, Other}}.
+ 
++%%--------------------------------------------------------------------
++%% Partitions of a group (POP1) and the merge that heals them (R-NS-1)
++%%--------------------------------------------------------------------
++
++set_sync(G, Nodes, S) ->
++    L = lists:usort(Nodes),
++    ets:insert(?VIEW, {{sync, G}, L}),
++    S#st{sync = maps:put(G, L, S#st.sync)}.
++
++bump(N, S) ->
++    S#st{seq = maps:update_with(N, fun(V) -> V + 1 end, 1, S#st.seq)}.
++
++%% V is no longer in step with this node in G: drop it from the in-sync set
++%% and forget the names of its processes in G (they return with the merge).
++leave_partition(G, V, S) ->
++    case lists:member(V, maps:get(G, S#st.sync, [])) of
++        true ->
++            S1 = set_sync(G, maps:get(G, S#st.sync) -- [V], S),
++            Ns = maps:get(G, S1#st.names, #{}),
++            maps:fold(fun(Nm, P, Acc) when node(P) =:= V -> del_name(G, Nm, Acc);
++                         (_, _, Acc) -> Acc
++                      end, S1, Ns);
++        false ->
++            S
++    end.
++
++%% For each group: a connected member outside this node's partition is
++%% merged in. The smaller node of the pair initiates; one merge per group at
++%% a time. Merges that cannot run yet (not fully connected) are retried.
++merge_tick(S) ->
++    Connected = nodes(connected),
++    maps:fold(
++      fun(G, Members, Acc) ->
++              Missing = lists:sort([M || M <- Members, M =/= node(), lists:member(M, Connected),
++                                         not lists:member(M, maps:get(G, Acc#st.sync, []))]),
++              %% Views can be asymmetric (an install ran before a link was
++              %% up): ask a smaller missing node to merge, see merge_request.
++              _ = [gen_server:cast({?MODULE, M}, {merge_request, G, node()})
++                   || M <- Missing, M < node()],
++              case {[M || M <- Missing, node() < M], maps:is_key(G, Acc#st.merging)} of
++                  {[Y | _], false} ->
++                      Self = self(),
++                      _ = spawn(fun() ->
++                                        try merge(G, Y) catch _:_ -> ok end,
++                                        gen_server:cast(Self, {merge_done, G})
++                                end),
++                      Acc#st{merging = maps:put(G, true, Acc#st.merging)};
++                  _ ->
++                      Acc
++              end
++      end, S, S#st.groups).
++
++%% Merge this node's partition of G with Y's, under one lock on both: every
++%% pair must be connected (a fully connected partition, as stock global
++%% requires); conflicting names are resolved as 19.3 does (global's
++%% random_exit_name/3: keep the smaller pid, kill the other); a pid left
++%% with several names keeps the smallest (decision U1).
++merge(G, Y) ->
++    P0 = i_sync_set(G),
++    Y0 = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
++    true = is_list(Y0),
++    locked(G, lists:usort(P0 ++ Y0),
++           fun() ->
++                   PI = i_sync_set(G),
++                   PY = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
++                   true = is_list(PY),
++                   U = lists:usort(PI ++ PY),
++                   [] = lists:append([rpc:call(N, ?MODULE, i_connect_all, [U], ?T) || N <- U]),
++                   NI = i_names(G),
++                   NY = rpc:call(Y, ?MODULE, i_names, [G], ?T),
++                   true = is_map(NY),
++                   {Names, Losers} = resolve(NI, NY),
++                   Stamps = maps:from_list(
++                              [{{A, X}, Seq}
++                               || A <- U,
++                                  {X, Seq} <- maps:to_list(rpc:call(A, ?MODULE, i_seqs, [], ?T)),
++                                  lists:member(X, U)]),
++                   _ = multicall(U, i_merged, [G, U, Names, Stamps]),
++                   _ = [exit(L, kill) || L <- Losers],
++                   ok
++           end).
++
++resolve(NI, NY) ->
++    {Merged, Losers} =
++        maps:fold(fun(Nm, P, {Acc, Ls}) ->
++                          case maps:find(Nm, Acc) of
++                              error -> {maps:put(Nm, P, Acc), Ls};
++                              {ok, P} -> {Acc, Ls};
++                              {ok, Q} -> {maps:put(Nm, min(P, Q), Acc), [max(P, Q) | Ls]}
++                          end
++                  end, {NI, []}, NY),
++    ByPid = maps:groups_from_list(fun({_Nm, P}) -> P end, fun({Nm, _P}) -> Nm end,
++                                  maps:to_list(Merged)),
++    Extra = lists:append([lists:sort(Nms) -- [lists:min(Nms)] || Nms <- maps:values(ByPid)]),
++    {maps:without(Extra, Merged), Losers}.
++
+ %%--------------------------------------------------------------------
+ %% Name tables
+ %%--------------------------------------------------------------------
+@@ -562,20 +743,10 @@ del_pid_name(G, Name, Pid, S) ->
+         _ -> S
+     end.
+ 
+-%% Same name, different pid: both sides keep the smaller pid, so a pairwise
+-%% merge is deterministic. A pid already registered under another name is
+-%% not added twice (P4, decision U1).
+-merge_name(G, Name, Pid, S) ->
+-    Ns = maps:get(G, S#st.names, #{}),
+-    case maps:find(Name, Ns) of
+-        {ok, Pid} -> S;
+-        {ok, Old} when Old < Pid -> S;
+-        {ok, _Old} -> put_name(G, Name, Pid, del_name(G, Name, S));
+-        error ->
+-            case lists:member(Pid, maps:values(Ns)) of
+-                true -> S;
+-                false -> put_name(G, Name, Pid, S)
+-            end
++del_name_if_other(G, Name, Pid, S) ->
++    case maps:get(Name, maps:get(G, S#st.names, #{}), Pid) of
++        Pid -> S;
++        _ -> del_name(G, Name, S)
+     end.
+ 
+ del_name(G, Name, S) ->
+@@ -586,10 +757,17 @@ del_name(G, Name, S) ->
+ %% Helpers
+ %%--------------------------------------------------------------------
+ 
++%% Name operations reach this node's partition of G: itself and the members
++%% in step with it (POP1). Other members get the names by the next merge.
+ with_members(G, NotMember, Fun) ->
+-    case maps:find(G, groups()) of
+-        {ok, Members} -> Fun(Members);
+-        error -> NotMember
++    case maps:is_key(G, groups()) of
++        true -> Fun([node() | in_sync(G)]);
++        false -> NotMember
++    end.
++
++in_sync(G) ->
++    try ets:lookup_element(?VIEW, {sync, G}, 2)
++    catch error:badarg -> []
+     end.
+ 
+ %% Group-wide lock on all members (global:trans with an explicit node list).
+-- 
+2.50.1 (Apple Git-155)
+
