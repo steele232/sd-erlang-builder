@@ -87,3 +87,19 @@ up to 2 link failures. Invariants are checked at rest:
 | `SGroupPOP_logical_chain.cfg` / `_logical_star.cfg` | per-group logical removal, links stay up | **all pass** |
 
 Not modelled yet: healing and re-sync, and hidden nodes.
+
+## `SGroupPOPHeal.tla`: D-5/POP1 with healing
+
+Adds `Heal`: a failed link comes back, and both ends re-sync each group it
+carries. A sync is a partition *merge*, as in `global`: it succeeds only if
+every pair across the two partitions is linked. (A first version without
+that produced a false counterexample.)
+
+| config | result |
+|---|---|
+| `SGroupPOPHeal_logical_chain_OverlapFree.cfg` / `_HealedComplete.cfg` | **violated**: a `lost_connection` report still in flight when the heal's syncs land removes the node again |
+| `SGroupPOPHeal_logical_epoch_{chain,star}_{OverlapFree,HealedComplete}.cfg` | pass: reports carry the link incarnation, and a receiver ignores reports older than a heal it has processed |
+
+With 2 failures: plain `logical` is violated (135k states). `logical_epoch`
+was stopped at 22.6M distinct states without a violation: incomplete.
+

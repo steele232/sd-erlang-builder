@@ -60,6 +60,12 @@
   fidelity_target: S
   port_policy: may_differ        # D-1 decided 2026-10-17 (spec/DECISIONS.md): a pre-existing link becomes visible once the ends share a group
   normalization: report-only
+  port_status: >-
+    kernel port: after an install every link to a fellow member is re-dialled
+    if hidden, so it is visible (also for members started with -hidden, which
+    publish on their groups as in 19.3's publish_on_nodes). L2: 11/30
+    sequences more visible than 19.3, all within shared groups or between
+    free nodes, none less visible (test/pbt/sd_l2_vis.escript).
 
 - id: O4
   layers: [M, I]

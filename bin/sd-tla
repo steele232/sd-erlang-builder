@@ -19,7 +19,7 @@ rc=0
 cd "$ROOT/spec/tla"
 for cfg in *.cfg; do
   spec="${cfg%%_*}.tla"
-  out="$(java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers auto -deadlock \
+  out="$(java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers 2 -deadlock \
            -metadir "$META/${cfg%.cfg}" -config "$cfg" "$spec" 2>&1 || true)"
   if grep -q "is violated" <<<"$out"; then got=violation; elif grep -q "No error has been found" <<<"$out"; then got=pass; else got=error; fi
   case "$cfg" in *_none.cfg) want=violation ;; *) want=pass ;; esac

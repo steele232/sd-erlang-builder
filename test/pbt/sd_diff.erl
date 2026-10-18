@@ -251,7 +251,9 @@ port_names(N, Maps) ->
               L when is_list(L) -> L;
               _ -> []
           end,
-    Free = case rpc:call(N, global, registered_names, []) of
+    %% Free names exist only on free nodes; on a member, the SD kernel's
+    %% global:registered_names/0 returns the group pairs instead (19.3).
+    Free = case Grp =:= [] andalso rpc:call(N, global, registered_names, []) of
                F when is_list(F) -> [{undefined, Nm} || Nm <- F];
                _ -> []
            end,

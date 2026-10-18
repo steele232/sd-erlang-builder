@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Build localhost/sd-erlang:29.1.2-sd-kernel: stock erlang:29.1.2 (pinned in
+# manifests/images.lock) with the SD kernel patches from patches/otp29/.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TAG=localhost/sd-erlang:29.1.2-sd-kernel
+ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+DIGEST=$(grep -m1 "$ARCH" "$ROOT/manifests/images.lock" | grep -o 'sha256:[0-9a-f]*' | head -1)
+"$ROOT/bin/sd-port-tree" >/dev/null
+T="$ROOT/build/otp29-kernel"
+OUT="$ROOT/build/port-src"; rm -rf "$OUT"; mkdir -p "$OUT/src"
+CHANGED=$(git -C "$T" diff --name-only base HEAD -- lib/kernel/src | grep '\.erl$' | xargs -n1 basename | sed 's/\.erl$//')
+for m in $CHANGED; do cp "$T/lib/kernel/src/$m.erl" "$OUT/src/"; done
+echo "$CHANGED" > "$OUT/CHANGED"
+(cd "$ROOT" && ls patches/otp29/*.patch | xargs shasum -a 256) > "$OUT/PATCHES"
+podman build --quiet --build-arg BASE_IMAGE="docker.io/library/erlang@$DIGEST" \
+  -f "$ROOT/containers/port/Containerfile.kernel" -t "$TAG" "$ROOT" >/dev/null
+echo "$TAG $(podman image inspect "$TAG" --format '{{.Id}}')"
+echo "modules: $(echo $CHANGED | tr '\n' ' ')"

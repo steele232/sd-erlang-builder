@@ -12,3 +12,5 @@ erl_crash.dump
 /vendor/proper-1.5/
 
 convo_transcripts/
+# Patch-authoring work tree for the OTP 29 kernel port (recreate with bin/sd-port-tree)
+/build/

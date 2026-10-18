@@ -1,0 +1,854 @@
+From 5e818e39eeb2be5c94cad6db7a0398bb0583c26e Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Sat, 17 Oct 2026 17:07:17 -0700
+Subject: [PATCH] SD Erlang s_groups: kernel topology provider and namespaces
+ (design B, milestone 1)
+
+---
+ lib/kernel/src/global.erl       |  40 ++-
+ lib/kernel/src/global_group.erl |  45 ++-
+ lib/kernel/src/kernel.app.src   |   2 +
+ lib/kernel/src/kernel.erl       |  10 +-
+ lib/kernel/src/s_group.erl      | 603 ++++++++++++++++++++++++++++++++
+ 5 files changed, 690 insertions(+), 10 deletions(-)
+ create mode 100644 lib/kernel/src/s_group.erl
+
+diff --git a/lib/kernel/src/global.erl b/lib/kernel/src/global.erl
+index b25c3b9..8db369f 100644
+--- a/lib/kernel/src/global.erl
++++ b/lib/kernel/src/global.erl
+@@ -380,7 +380,10 @@ the name is not globally registered.
+ -spec whereis_name(Name) -> pid() | 'undefined' when
+       Name :: term().
+ whereis_name(Name) ->
+-    where(Name).
++    case sd_member() of
++        true -> undefined;                       % SD Erlang: no free names on a member
++        false -> where(Name)
++    end.
+ 
+ %%-----------------------------------------------------------------
+ %% Method = function(Name, Pid1, Pid2) -> Pid | Pid2 | none
+@@ -396,7 +399,7 @@ whereis_name(Name) ->
+ %% Method blocks the name registration, but does not affect global locking.
+ %%-----------------------------------------------------------------
+ -doc(#{equiv => register_name(Name, Pid, fun random_exit_name/3)}).
+--spec register_name(Name, Pid) -> 'yes' | 'no' when
++-spec register_name(Name, Pid) -> 'yes' | 'no' | {'no', 'the_node_is_not_free'} when
+       Name :: term(),
+       Pid :: pid().
+ register_name(Name, Pid) when is_pid(Pid) ->
+@@ -445,11 +448,17 @@ register a process with a name that is already in use.
+ If a process with a registered name dies, or the node goes down, the name is
+ unregistered on all nodes.
+ """.
+--spec register_name(Name, Pid, Resolve) -> 'yes' | 'no' when
++-spec register_name(Name, Pid, Resolve) -> 'yes' | 'no' | {'no', 'the_node_is_not_free'} when
+       Name :: term(),
+       Pid :: pid(),
+       Resolve :: method().
+ register_name(Name, Pid, Method0) when is_pid(Pid) ->
++    case sd_member() of
++        true -> {no, the_node_is_not_free};      % SD Erlang 19.3 semantics
++        false -> register_name_free(Name, Pid, Method0)
++    end.
++
++register_name_free(Name, Pid, Method0) ->
+     Method = allow_tuple_fun(Method0),
+     Fun = fun(Nodes) ->
+         case (where(Name) =:= undefined) andalso check_dupname(Name, Pid) of
+@@ -500,7 +509,7 @@ unregister_name(Name) ->
+     end.
+ 
+ -doc(#{equiv => re_register_name(Name, Pid, fun random_exit_name/3)}).
+--spec re_register_name(Name, Pid) -> 'yes' when
++-spec re_register_name(Name, Pid) -> 'yes' | {'no', 'the_node_is_not_free'} when
+       Name :: term(),
+       Pid :: pid().
+ re_register_name(Name, Pid) when is_pid(Pid) ->
+@@ -512,11 +521,17 @@ Atomically changes the registered name `Name` on all nodes to refer to `Pid`.
+ Function `Resolve` has the same behavior as in
+ [`register_name/2,3`](`register_name/2`).
+ """.
+--spec re_register_name(Name, Pid, Resolve) -> 'yes' when
++-spec re_register_name(Name, Pid, Resolve) -> 'yes' | {'no', 'the_node_is_not_free'} when
+       Name :: term(),
+       Pid :: pid(),
+       Resolve :: method().
+ re_register_name(Name, Pid, Method0) when is_pid(Pid) ->
++    case sd_member() of
++        true -> {no, the_node_is_not_free};      % SD Erlang 19.3 semantics
++        false -> re_register_name_free(Name, Pid, Method0)
++    end.
++
++re_register_name_free(Name, Pid, Method0) ->
+     Method = allow_tuple_fun(Method0),
+     Fun = fun(Nodes) ->
+ 		  _ = gen_server:multi_call(Nodes,
+@@ -531,8 +546,12 @@ re_register_name(Name, Pid, Method0) when is_pid(Pid) ->
+ -spec registered_names() -> [Name] when
+       Name :: term().
+ registered_names() ->
+-    MS = ets:fun2ms(fun({Name,_Pid,_M,_R}) -> Name end),
+-    ets:select(global_names, MS).
++    case sd_member() of
++        true -> s_group:registered_names({node, node()});   % 19.3: {SGroup, Name}
++        false ->
++            MS = ets:fun2ms(fun({Name,_Pid,_M,_R}) -> Name end),
++            ets:select(global_names, MS)
++    end.
+ 
+ %%-----------------------------------------------------------------
+ %% The external node (e.g. a C-node) registers the name on an Erlang
+@@ -3356,3 +3375,10 @@ allow_tuple_fun({M, F}) when is_atom(M), is_atom(F) ->
+     fun M:F/3;
+ allow_tuple_fun(Fun) when is_function(Fun, 3) ->
+     Fun.
++
++%% SD Erlang (RELEASE project) s_groups: set by s_group while this node is a
++%% member of at least one s_group. Members have no free (global) namespace:
++%% registration is refused and lookups miss, as in SD Erlang 19.3 (JPDC'16
++%% sec. 3.1.4, spec/deviations.yml I4).
++sd_member() ->
++    persistent_term:get({s_group, member}, false).
+diff --git a/lib/kernel/src/global_group.erl b/lib/kernel/src/global_group.erl
+index edbd3e1..514b7ca 100644
+--- a/lib/kernel/src/global_group.erl
++++ b/lib/kernel/src/global_group.erl
+@@ -1765,6 +1765,12 @@ force_nodedown(DisconnectNodes, Conns) ->
+ %%%====================================================================================
+ -doc false.
+ get_own_nodes_with_errors() ->
++    case sd_provider() of
++        true -> s_group:get_own_nodes_with_errors();
++        false -> get_own_nodes_with_errors_gg()
++    end.
++
++get_own_nodes_with_errors_gg() ->
+     case lookup_group_conf(false) of
+         #gconf{state = {error, Error, _NodeGrps}} ->
+             {error, Error};
+@@ -1791,7 +1797,10 @@ get_own_nodes(#gconf{group_list = Nodes}) ->
+ -spec group_configured() -> boolean().
+ 
+ group_configured() ->
+-    group_configured(lookup_group_conf(false)).
++    case sd_provider() of
++        true -> s_group:group_configured();
++        false -> group_configured(lookup_group_conf(false))
++    end.
+ 
+ group_configured(GConf) ->
+     case GConf of
+@@ -1812,6 +1821,12 @@ group_configured(GConf) ->
+ -spec participant(Node::node()) -> boolean().
+ 
+ participant(Node) ->
++    case sd_provider() of
++        true -> s_group:participant(Node);
++        false -> participant_gg(Node)
++    end.
++
++participant_gg(Node) ->
+     case lookup_group_conf(false) of
+         #gconf{group_map = all} ->
+             true;
+@@ -1829,7 +1844,10 @@ participant(Node) ->
+ -spec member(Node::node()) -> boolean().
+ 
+ member(Node) ->
+-    member(false, Node).
++    case sd_provider() of
++        true -> s_group:member(Node);
++        false -> member(false, Node)
++    end.
+ 
+ member(GG, Node) ->
+     case lookup_group_conf(GG) of
+@@ -1851,6 +1869,12 @@ member(GG, Node) ->
+ publish(OwnPublishType, Node) when (OwnPublishType == normal
+                                     orelse OwnPublishType == hidden)
+                                    andalso is_atom(Node) ->
++    case sd_provider() of
++        true -> s_group:publish(OwnPublishType, Node);
++        false -> publish_gg(OwnPublishType, Node)
++    end.
++
++publish_gg(OwnPublishType, Node) ->
+     case lookup_group_conf(false) of
+         #gconf{group_map = all} when OwnPublishType == normal ->
+             true;
+@@ -1863,3 +1887,20 @@ publish(OwnPublishType, Node) when (OwnPublishType == normal
+         #gconf{} ->
+             false
+     end.
++
++%%%====================================================================================
++%%% SD Erlang (RELEASE project) s_groups. While the s_group server is the
++%%% topology provider, the seam functions above (used by global and
++%%% net_kernel) answer from s_group instead of the global_groups
++%%% configuration. s_group and global_groups are mutually exclusive on a node.
++%%%====================================================================================
++
++sd_provider() ->
++    case persistent_term:get({s_group, provider}, undefined) of
++        undefined ->
++            %% s_group not started yet (early connections at boot): a node
++            %% configured with s_groups is already governed by them.
++            application:get_env(kernel, s_groups) =/= undefined;
++        Provider ->
++            Provider
++    end.
+diff --git a/lib/kernel/src/kernel.app.src b/lib/kernel/src/kernel.app.src
+index 54d2883..ccc2de9 100644
+--- a/lib/kernel/src/kernel.app.src
++++ b/lib/kernel/src/kernel.app.src
+@@ -50,6 +50,7 @@
+              file_io_server,
+ 	     global,
+ 	     global_group,
++	     s_group,
+ 	     global_search,
+ 	     group,
+ 	     group_history,
+@@ -142,6 +143,7 @@
+ 		fixtable_server,
+ 		global_group,
+ 		global_name_server,
++		s_group,
+ 		heart,
+ 		init,
+ 		kernel_config,
+diff --git a/lib/kernel/src/kernel.erl b/lib/kernel/src/kernel.erl
+index 09281af..f001bed 100644
+--- a/lib/kernel/src/kernel.erl
++++ b/lib/kernel/src/kernel.erl
+@@ -274,7 +274,15 @@ start_distribution() ->
+                 type => worker,
+                 modules => [global_group]},
+ 
+-    [Rpc, Global | DistAC] ++ [NetSup, GlGroup].
++    %% SD Erlang s_groups (topology provider for global and net_kernel).
++    SGroup = #{id => s_group,
++               start => {s_group,start_link,[]},
++               restart => permanent,
++               shutdown => 2000,
++               type => worker,
++               modules => [s_group]},
++
++    [Rpc, Global | DistAC] ++ [NetSup, GlGroup, SGroup].
+ 
+ start_dist_ac() ->
+     Spec = [#{id => dist_ac,
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+new file mode 100644
+index 0000000..8c471dc
+--- /dev/null
++++ b/lib/kernel/src/s_group.erl
+@@ -0,0 +1,603 @@
++%%
++%% %CopyrightBegin%
++%%
++%% SPDX-License-Identifier: Apache-2.0
++%%
++%% Port of SD Erlang s_groups (RELEASE project, release-project/otp
++%% 19.3-rebased 0fdfcf28) to OTP 29. The design is "B" in
++%% spec/PORT_OTP29_FEASIBILITY.md of the porting repository.
++%%
++%% %CopyrightEnd%
++%%
++-module(s_group).
++-moduledoc false.
++
++%% s_groups (Chechina et al., JPDC 2016; RELEASE D3.3): nodes form named,
++%% possibly overlapping groups. Connections are transitive within a group and
++%% non-transitive across groups; every group has its own namespace.
++%%
++%% Topology is provided to global and net_kernel through the global_group seam
++%% (global_group delegates participant/1, member/1, group_configured/0,
++%% publish/2 and get_own_nodes_with_errors/0 here):
++%%   * a connection is visible iff both ends publish, and a member publishes
++%%     only on the members of its groups (19.3 publish_on_nodes);
++%%   * global's single namespace is the FREE namespace: global syncs only with
++%%     peers for which this server has sent {group_nodeup, ...}, which happens
++%%     when both ends are free normal nodes. Joining a group leaves it with
++%%     {group_nodedown, ...} (a logical removal; the link stays up);
++%%   * group namespaces live here, replicated to the members under a
++%%     group-wide global lock.
++%%
++%% The provider functions are called from net_kernel and global and must
++%% never call this server: they read the protected table ?VIEW (or the
++%% kernel s_groups application variable before the server has started).
++
++-behaviour(gen_server).
++
++%% API (19.3 shapes; spec/SD_ERLANG_SPEC.md 3)
++-export([start_link/0]).
++-export([new_s_group/2, add_nodes/2, remove_nodes/2, delete_s_group/1,
++         register_name/3, re_register_name/3, unregister_name/2,
++         whereis_name/2, whereis_name/3, send/3, send/4, registered_names/1,
++         own_nodes/0, own_nodes/1, own_s_groups/0, s_groups/0, sync/0, info/0,
++         add_attributes/1, registered_attributes/0, choose_nodes/1,
++         connect_node/1, known_peers/1]).
++%% topology provider (called from global_group)
++-export([group_configured/0, participant/1, member/1, publish/2,
++         get_own_nodes_with_errors/0]).
++%% internal (called on other members)
++-export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
++         i_names/1, i_is_free/0]).
++-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
++         code_change/3]).
++
++-define(T, 15000).
++-define(VIEW, s_group_view).
++
++%% groups :: #{G => [node()]}; names :: #{G => #{Name => pid()}};
++%% mons :: #{reference() => {G, Name}}; conns :: #{node() => ConnectionId}
++-record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{}}).
++
++start_link() ->
++    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
++
++%%--------------------------------------------------------------------
++%% Membership
++%%--------------------------------------------------------------------
++
++new_s_group(G, Nodes0) ->
++    Nodes = lists:usort(Nodes0),
++    case {lists:member(node(), Nodes), maps:is_key(G, groups())} of
++        {false, _} -> {error, remote_s_group};
++        {true, true} -> {error, s_group_name_is_in_use};
++        {true, false} ->
++            %% Install here first, so this node leaves the free namespace
++            %% before it links to anyone (test/corpus/l1-c4-joinrace.eterm).
++            ok = i_install(G, Nodes, #{}),
++            Others = Nodes -- [node()],
++            _ = [net_kernel:connect_node(N) || N <- Others],
++            _ = multicall(Others, i_install, [G, Nodes, #{}]),
++            _ = multicall(Nodes, i_mesh, [G]),
++            {ok, G, Nodes}
++    end.
++
++add_nodes(G, Nodes0) ->
++    case lists:usort(Nodes0) -- [node()] of
++        [] -> {ok, G, []};                                     % I1
++        Nodes ->
++            case maps:find(G, groups()) of
++                error -> {error, node_does_not_belong_to_the_s_group};
++                {ok, Members} ->
++                    case Nodes -- Members of
++                        [] -> {ok, G, Nodes};                  % I3
++                        New ->
++                            All = lists:usort(Members ++ New),
++                            _ = [net_kernel:connect_node(N) || N <- New],
++                            locked(G, All,
++                                   fun() ->
++                                           Ns = i_names(G),
++                                           _ = multicall(All, i_install, [G, All, Ns]),
++                                           _ = multicall(All, i_mesh, [G]),
++                                           {ok, G, New}
++                                   end)
++                    end
++            end
++    end.
++
++remove_nodes(G, Nodes0) ->
++    Nodes = lists:usort(Nodes0),
++    case {Nodes, lists:member(node(), Nodes), maps:find(G, groups())} of
++        {[], _, _} -> ok;
++        {_, true, _} -> {error, "cannot_remove_itself"};
++        {_, _, error} -> {error, {"node_does_not_belong_to_s_group", G}};
++        {_, _, {ok, Members}} ->
++            case [N || N <- Nodes, lists:member(N, Members)] of   % I2
++                [] -> ok;
++                Rm ->
++                    Rest = Members -- Rm,
++                    locked(G, Members,
++                           fun() ->
++                                   Ns = i_names(G),
++                                   _ = multicall(Rest, i_install, [G, Rest, Ns]),
++                                   _ = multicall(Rm, i_drop, [G]),
++                                   ok
++                           end)
++            end
++    end.
++
++delete_s_group(G) ->
++    case maps:find(G, groups()) of
++        error -> {error, {"remote_s_group", G}};
++        {ok, Members} ->
++            _ = multicall(Members, i_drop, [G]),
++            ok
++    end.
++
++%%--------------------------------------------------------------------
++%% Names (replicated per group under a group-wide lock)
++%%--------------------------------------------------------------------
++
++register_name(G, Name, Pid) when is_pid(Pid) ->
++    with_members(G, {no, cannot_register_in_remote_group},
++                 fun(Members) ->
++                         locked(G, Members,
++                                fun() ->
++                                        Ns = i_names(G),
++                                        case maps:is_key(Name, Ns) orelse
++                                             lists:member(Pid, maps:values(Ns)) of
++                                            true -> {no, name_or_pid_already_registered};
++                                            false ->
++                                                _ = multicall(Members, i_insert, [G, Name, Pid, none]),
++                                                yes
++                                        end
++                                end)
++                 end).
++
++re_register_name(G, Name, Pid) when is_pid(Pid) ->
++    with_members(G, {no, cannot_re_register_in_remote_group},
++                 fun(Members) ->
++                         locked(G, Members,
++                                fun() ->
++                                        Ns = i_names(G),
++                                        case lists:member(Pid, maps:values(Ns)) of
++                                            true -> {no, pid_is_already_registered};
++                                            false ->
++                                                _ = multicall(Members, i_insert, [G, Name, Pid, replace]),
++                                                yes
++                                        end
++                                end)
++                 end).
++
++unregister_name(G, Name) ->
++    with_members(G, {no, cannot_unregister_from_remote_group},       % R2
++                 fun(Members) ->
++                         locked(G, Members,
++                                fun() -> _ = multicall(Members, i_delete, [G, Name, any]), ok end)
++                 end).
++
++whereis_name(G, Name) ->
++    case maps:is_key(G, groups()) of
++        true -> i_lookup(G, Name);
++        false -> undefined
++    end.
++
++whereis_name(Node, G, Name) ->
++    case rpc:call(Node, ?MODULE, i_lookup, [G, Name], ?T) of
++        P when is_pid(P) -> P;
++        _ -> undefined
++    end.
++
++send(G, Name, Msg) ->
++    case whereis_name(G, Name) of
++        P when is_pid(P) -> P ! Msg, P;
++        undefined -> {badarg, {G, Name, Msg}}                        % R1
++    end.
++
++send(Node, G, Name, Msg) ->
++    case whereis_name(Node, G, Name) of
++        P when is_pid(P) -> P ! Msg, P;
++        undefined -> {badarg, {G, Name, Msg}}
++    end.
++
++registered_names({s_group, G}) ->
++    case maps:is_key(G, groups()) of
++        true -> [{G, N} || N <- lists:sort(maps:keys(i_names(G)))];
++        false -> []
++    end;
++registered_names({node, N}) when N =:= node() ->
++    lists:append([[{G, Nm} || Nm <- maps:keys(Ns)] || {G, Ns} <- maps:to_list(all_names())]);
++registered_names({node, N}) ->
++    rpc:call(N, ?MODULE, registered_names, [{node, N}], ?T).
++
++%%--------------------------------------------------------------------
++%% Introspection
++%%--------------------------------------------------------------------
++
++own_s_groups() -> lists:sort(maps:to_list(groups())).
++own_nodes() -> lists:usort([node() | lists:append(maps:values(groups()))]).
++own_nodes(G) -> maps:get(G, groups(), []).
++%% 19.3 answers undefined while it has no group state (no_conf).
++s_groups() ->
++    case groups() of
++        Gs when map_size(Gs) =:= 0 -> undefined;
++        Gs -> {lists:sort(maps:keys(Gs)), []}
++    end.
++sync() -> ok.
++info() -> [{state, synced}, {own_s_groups, own_s_groups()}].
++
++%% Quiescence probe for the verification harness: group namespaces are
++%% replicated explicitly, so knowledge equals membership.
++known_peers(G) -> own_nodes(G) -- [node()].
++
++add_attributes(As) -> gen_server:call(?MODULE, {add_attributes, As}).
++registered_attributes() -> gen_server:call(?MODULE, attributes).
++
++choose_nodes(Args) ->
++    Want = lists:usort([A || {attribute, A} <- Args]),
++    [N || N <- nodes(),
++          begin
++              Has = rpc:call(N, ?MODULE, registered_attributes, [], ?T),
++              is_list(Has) andalso (Want -- Has) =:= []
++          end].
++
++%% For cluster-management tools (libcluster's connect callback): connect only
++%% to a node that shares a group with this one (spec/deviations.yml RC1).
++connect_node(Node) when is_atom(Node) ->
++    case lists:member(Node, own_nodes()) andalso Node =/= node() of
++        true -> net_kernel:connect_node(Node);
++        false -> ignored
++    end.
++
++%%--------------------------------------------------------------------
++%% Topology provider (global_group seam). Never calls this server.
++%%--------------------------------------------------------------------
++
++group_configured() -> true.
++
++%% Partners of global's (free) namespace.
++participant(Node) ->
++    try ets:member(?VIEW, {free_peer, Node})
++    catch error:badarg -> false
++    end.
++
++%% Free peers are not global-group members for partition prevention, so it
++%% stays physical among free nodes, as in stock OTP.
++member(_Node) -> false.
++
++publish(OwnPublishType, Node) ->
++    case view_groups() of
++        Gs when map_size(Gs) =:= 0 -> OwnPublishType =:= normal;
++        Gs -> lists:member(Node, lists:append(maps:values(Gs)))
++    end.
++
++get_own_nodes_with_errors() -> {ok, all}.
++
++%%--------------------------------------------------------------------
++%% Internal operations executed on each member
++%%--------------------------------------------------------------------
++
++i_install(G, Members, Names) -> gen_server:call(?MODULE, {install, G, Members, Names}, ?T).
++i_mesh(G) -> gen_server:call(?MODULE, {mesh, G}, ?T).
++i_drop(G) -> gen_server:call(?MODULE, {drop, G}, ?T).
++i_insert(G, Name, Pid, Mode) -> gen_server:call(?MODULE, {insert, G, Name, Pid, Mode}, ?T).
++i_delete(G, Name, Pid) -> gen_server:call(?MODULE, {delete, G, Name, Pid}, ?T).
++i_lookup(G, Name) -> maps:get(Name, maps:get(G, all_names(), #{}), undefined).
++i_names(G) -> maps:get(G, all_names(), #{}).
++i_is_free() -> view_groups() =:= #{} andalso not hidden().
++
++groups() -> view_groups().
++all_names() -> gen_server:call(?MODULE, names, ?T).
++
++%%--------------------------------------------------------------------
++%% gen_server
++%%--------------------------------------------------------------------
++
++init([]) ->
++    case {application:get_env(kernel, global_groups), application:get_env(kernel, s_groups)} of
++        {{ok, _}, {ok, _}} ->
++            {stop, {conflicting_configuration, [global_groups, s_groups]}};   % D-6 / GG1
++        {{ok, _}, undefined} ->
++            persistent_term:put({s_group, provider}, false),
++            ignore;
++        {_, Conf} ->
++            case static_groups(Conf) of
++                {error, _} = Error ->
++                    {stop, Error};                                        % D-3 / DN1
++                {ok, Groups} ->
++                    _ = ets:new(?VIEW, [named_table, protected, set, {read_concurrency, true}]),
++                    ets:insert(?VIEW, {groups, Groups}),
++                    persistent_term:put({s_group, member}, Groups =/= #{}),
++                    persistent_term:put({s_group, provider}, true),
++                    ok = net_kernel:monitor_nodes(true, #{connection_id => true,
++                                                          node_type => all}),
++                    Peers = lists:usort(lists:append(maps:values(Groups))) -- [node()],
++                    _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Peers] end),
++                    {ok, #st{groups = Groups,
++                             names = maps:map(fun(_, _) -> #{} end, Groups)}}
++            end
++    end.
++
++handle_call(names, _F, S) -> {reply, S#st.names, S};
++handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
++handle_call({add_attributes, As}, _F, S) ->
++    {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
++handle_call({install, G, Members, Names}, _F, S) ->
++    %% D3.3 InterConnectNodes: every member connects to every other member.
++    Others = Members -- [node()],
++    _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Others] end),
++    S1 = lists:foldl(fun({Nm, P}, Acc) -> put_name(G, Nm, P, Acc) end,
++                     set_groups(maps:put(G, Members, S#st.groups),
++                                S#st{names = maps:put(G, maps:get(G, S#st.names, #{}),
++                                                      S#st.names)}),
++                     maps:to_list(Names)),
++    {reply, ok, S1};
++handle_call({mesh, G}, _F, S) ->
++    %% D-1 (spec/deviations.yml O3): a link to a fellow member that is hidden
++    %% because it predates the shared group is re-established, so that it is
++    %% published (visible) like any other intra-group link.
++    Hidden = nodes(hidden),
++    Others = maps:get(G, S#st.groups, []) -- [node()],
++    _ = spawn(fun() ->
++                      [begin
++                           case lists:member(N, Hidden) of
++                               true -> erlang:disconnect_node(N);
++                               false -> ok
++                           end,
++                           net_kernel:connect_node(N)
++                       end || N <- Others, not lists:member(N, nodes(visible))]
++              end),
++    {reply, ok, S};
++handle_call({drop, G}, _F, S) ->
++    S1 = set_groups(maps:remove(G, S#st.groups), S#st{names = maps:remove(G, S#st.names)}),
++    {reply, ok, S1};
++handle_call({insert, G, Name, Pid, Mode}, _F, S) ->
++    S1 = case Mode of replace -> del_name(G, Name, S); none -> S end,
++    {reply, ok, put_name(G, Name, Pid, S1)};
++handle_call({delete, G, Name, _Pid}, _F, S) ->
++    {reply, ok, del_name(G, Name, S)}.
++
++handle_cast({merge, G, Names}, S) ->
++    case maps:is_key(G, S#st.groups) of
++        true -> {noreply, lists:foldl(fun({Nm, P}, Acc) -> merge_name(G, Nm, P, Acc) end,
++                                      S, Names)};
++        false -> {noreply, S}
++    end;
++handle_cast({pid_down, G, Name, Pid}, S) ->
++    {noreply, del_pid_name(G, Name, Pid, S)};
++%% Free namespace: Node answered that it is free; join global's partition
++%% with it if this node is still free and the connection is the same one.
++handle_cast({free_ok, Node, CId}, S) ->
++    case free_normal(S) andalso maps:get(Node, S#st.conns, undefined) =:= CId
++        andalso ets:lookup(?VIEW, {free_peer, Node}) =/= [{{free_peer, Node}, CId}] of
++        true ->
++            ets:insert(?VIEW, {{free_peer, Node}, CId}),
++            global_name_server ! {group_nodeup, Node, CId};
++        false -> ok
++    end,
++    {noreply, S};
++handle_cast({not_free, Node, CId}, S) ->
++    %% A stale entry from an earlier connection (the node has joined a group).
++    case maps:get(Node, S#st.conns, undefined) =:= CId of
++        true -> ets:delete(?VIEW, {free_peer, Node});
++        false -> ok
++    end,
++    {noreply, S};
++handle_cast({left_free, Node}, S) ->
++    {noreply, drop_free_peer(Node, S)};
++handle_cast({became_free, Node}, S) ->
++    _ = check_free(Node, S),
++    {noreply, S};
++handle_cast(_, S) -> {noreply, S}.
++
++handle_info({'DOWN', Ref, process, _Pid, noconnection}, S) ->
++    %% The link went down, not the process (e.g. the D-1 re-dial in
++    %% {mesh, _}). nodedown drops the name locally; the merge on reconnect
++    %% restores it. Never tell the other replicas the process died.
++    {noreply, S#st{mons = maps:remove(Ref, S#st.mons)}};
++handle_info({'DOWN', Ref, process, Pid, _}, S) ->
++    case maps:take(Ref, S#st.mons) of
++        {{G, Name}, Mons} ->
++            %% Only some replicas monitor (see put_name/4): tell the rest.
++            Others = maps:get(G, S#st.groups, []) -- [node()],
++            _ = [gen_server:cast({?MODULE, M}, {pid_down, G, Name, Pid}) || M <- Others],
++            {noreply, del_pid_name(G, Name, Pid, S#st{mons = Mons})};
++        error -> {noreply, S}
++    end;
++handle_info({nodeup, N, #{connection_id := CId} = Info}, S0) ->
++    S = S0#st{conns = maps:put(N, CId, S0#st.conns)},
++    %% Merge on join: push the names of this node's own processes, per shared
++    %% group, to a member that has just connected.
++    _ = [gen_server:cast({?MODULE, N},
++                         {merge, G, [{Nm, P} || {Nm, P} <- maps:to_list(maps:get(G, S#st.names, #{})),
++                                                node(P) =:= node()]})
++         || {G, Members} <- maps:to_list(S#st.groups), lists:member(N, Members)],
++    _ = case maps:get(node_type, Info, visible) of
++            visible -> check_free(N, S);
++            hidden -> ok
++        end,
++    {noreply, S};
++handle_info({nodedown, N, _Info}, S0) ->
++    %% {free_peer, N} is kept: global asks participant(N) while it handles
++    %% this same nodedown (partition prevention), and must get the answer
++    %% that held for the lost connection. A later check_free/2 or leaving
++    %% the free namespace removes it.
++    S = S0#st{conns = maps:remove(N, S0#st.conns)},
++    Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S#st.names), {Nm, P} <- maps:to_list(Ns),
++                          node(P) =:= N],
++    {noreply, lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S, Gone)};
++handle_info(_, S) -> {noreply, S}.
++
++terminate(_, _) -> ok.
++code_change(_, S, _) -> {ok, S}.
++
++%%--------------------------------------------------------------------
++%% Membership state and the free namespace
++%%--------------------------------------------------------------------
++
++%% Every change of this node's groups goes through here: it keeps ?VIEW and
++%% the member flag read by global in step, and moves the node out of or back
++%% into global's (free) namespace.
++set_groups(New, #st{groups = Old} = S) ->
++    ets:insert(?VIEW, {groups, New}),
++    S1 = S#st{groups = New},
++    case {map_size(Old) =:= 0, map_size(New) =:= 0} of
++        {true, false} ->                                     % joined: no longer free
++            persistent_term:put({s_group, member}, true),
++            Peers = [P || [P] <- ets:match(?VIEW, {{free_peer, '$1'}, '_'})],
++            lists:foldl(fun(P, Acc) ->
++                                gen_server:cast({?MODULE, P}, {left_free, node()}),
++                                drop_free_peer(P, Acc)
++                        end, S1, Peers);
++        {false, true} ->                                     % left the last group: free
++            persistent_term:put({s_group, member}, false),
++            _ = [begin
++                     gen_server:cast({?MODULE, N}, {became_free, node()}),
++                     check_free(N, S1)
++                 end || N <- nodes(visible)],
++            S1;
++        _ ->
++            S1
++    end.
++
++drop_free_peer(Node, S) ->
++    case ets:lookup(?VIEW, {free_peer, Node}) of
++        [{_, CId}] ->
++            ets:delete(?VIEW, {free_peer, Node}),
++            global_name_server ! {group_nodedown, Node, CId},
++            S;
++        [] ->
++            S
++    end.
++
++%% Ask Node whether it is free; on yes, {free_ok, ...} joins the namespaces.
++check_free(Node, S) ->
++    case free_normal(S) andalso maps:find(Node, S#st.conns) of
++        {ok, CId} ->
++            Self = self(),
++            _ = spawn(fun() ->
++                              try erpc:call(Node, ?MODULE, i_is_free, [], ?T) of
++                                  true -> gen_server:cast(Self, {free_ok, Node, CId});
++                                  false -> gen_server:cast(Self, {not_free, Node, CId});
++                                  _ -> ok
++                              catch _:_ -> ok
++                              end
++                      end),
++            ok;
++        _ ->
++            ok
++    end.
++
++free_normal(S) -> map_size(S#st.groups) =:= 0 andalso not hidden().
++
++hidden() -> init:get_argument(hidden) =/= error.
++
++view_groups() ->
++    try ets:lookup_element(?VIEW, groups, 2)
++    catch error:badarg -> env_groups()
++    end.
++
++%% Before the server has started (early connections at boot), answer from
++%% the static configuration, as 19.3's publish_on_nodes/0 did.
++env_groups() ->
++    case static_groups(application:get_env(kernel, s_groups)) of
++        {ok, Gs} -> Gs;
++        {error, _} -> #{}
++    end.
++
++%% Launch configuration (D3.3 3.1): {kernel, [{s_groups, [{G, normal, Nodes}]}]}.
++%% Identical repeated definitions are merged. A group defined more than once
++%% with different members (D3.3 3.1, decisions D-3/D-4): if this node is in
++%% any of the definitions, refuse to start; otherwise ignore the group.
++static_groups(undefined) -> {ok, #{}};
++static_groups({ok, Defs}) when is_list(Defs) ->
++    ByName = lists:foldl(fun({G, _Type, Ns}, Acc) ->
++                                 maps:update_with(G, fun(L) -> [lists:usort(Ns) | L] end,
++                                                  [lists:usort(Ns)], Acc)
++                         end, #{}, Defs),
++    try
++        Own = maps:fold(
++                fun(G, NsList, Acc) ->
++                        case lists:usort(NsList) of
++                            [Ns] ->
++                                case lists:member(node(), Ns) of
++                                    true -> maps:put(G, Ns, Acc);
++                                    false -> Acc
++                                end;
++                            Conflicting ->
++                                case lists:member(node(), lists:append(Conflicting)) of
++                                    true -> throw({duplicate_s_group_definition, G});
++                                    false -> Acc
++                                end
++                        end
++                end, #{}, ByName),
++        {ok, Own}
++    catch throw:Reason -> {error, Reason}
++    end;
++static_groups({ok, Other}) -> {error, {bad_s_groups, Other}}.
++
++%%--------------------------------------------------------------------
++%% Name tables
++%%--------------------------------------------------------------------
++
++put_name(G, Name, Pid, S) ->
++    Ns = maps:get(G, S#st.names, #{}),
++    case maps:get(Name, Ns, undefined) of
++        Pid -> S;
++        _ ->
++            S1 = S#st{names = maps:put(G, maps:put(Name, Pid, Ns), S#st.names)},
++            %% Monitoring a pid on an unconnected node would open a new link
++            %% to it; monitor only over an existing link. The other replicas
++            %% learn of the death through {pid_down, ...} or nodedown.
++            case node(Pid) =:= node() orelse lists:member(node(Pid), nodes(connected)) of
++                true ->
++                    Ref = erlang:monitor(process, Pid),
++                    S1#st{mons = maps:put(Ref, {G, Name}, S1#st.mons)};
++                false -> S1
++            end
++    end.
++
++del_pid_name(G, Name, Pid, S) ->
++    case maps:get(Name, maps:get(G, S#st.names, #{}), undefined) of
++        Pid -> del_name(G, Name, S);
++        _ -> S
++    end.
++
++%% Same name, different pid: both sides keep the smaller pid, so a pairwise
++%% merge is deterministic. A pid already registered under another name is
++%% not added twice (P4, decision U1).
++merge_name(G, Name, Pid, S) ->
++    Ns = maps:get(G, S#st.names, #{}),
++    case maps:find(Name, Ns) of
++        {ok, Pid} -> S;
++        {ok, Old} when Old < Pid -> S;
++        {ok, _Old} -> put_name(G, Name, Pid, del_name(G, Name, S));
++        error ->
++            case lists:member(Pid, maps:values(Ns)) of
++                true -> S;
++                false -> put_name(G, Name, Pid, S)
++            end
++    end.
++
++del_name(G, Name, S) ->
++    Ns = maps:get(G, S#st.names, #{}),
++    S#st{names = maps:put(G, maps:remove(Name, Ns), S#st.names)}.
++
++%%--------------------------------------------------------------------
++%% Helpers
++%%--------------------------------------------------------------------
++
++with_members(G, NotMember, Fun) ->
++    case maps:find(G, groups()) of
++        {ok, Members} -> Fun(Members);
++        error -> NotMember
++    end.
++
++%% Group-wide lock on all members (global:trans with an explicit node list).
++locked(G, Members, Fun) ->
++    case global:trans({{?MODULE, G}, self()}, Fun, Members, infinity) of
++        aborted -> {error, lock_aborted};
++        R -> R
++    end.
++
++multicall(Nodes, F, Args) ->
++    erpc:multicall(Nodes, ?MODULE, F, Args, ?T).
+-- 
+2.50.1 (Apple Git-155)
+

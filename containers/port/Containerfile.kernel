@@ -1,0 +1,18 @@
+# SD Erlang kernel port on stock OTP 29.1.2 (design B). The patched kernel
+# modules (patches/otp29/*.patch applied to upstream lib/kernel, see
+# bin/sd-build-port) are compiled with the image's own compiler and options and
+# replace the stock beams in the image's kernel ebin. Nothing else changes.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY build/port-src/ /tmp/sd-kernel/
+RUN set -e; K=$(ls -d /usr/local/lib/erlang/lib/kernel-*); \
+    for f in $(cat /tmp/sd-kernel/CHANGED); do \
+      cp /tmp/sd-kernel/src/$f.erl $K/src/$f.erl; \
+      erlc -Werror +debug_info -I $K/include -o $K/ebin $K/src/$f.erl; \
+    done; \
+    erl -noshell -eval '[K] = filelib:wildcard("/usr/local/lib/erlang/lib/kernel-*"), \
+        F = K ++ "/ebin/kernel.app", {ok, [{application, kernel, P}]} = file:consult(F), \
+        Add = fun(Key, X) -> lists:usort([X | proplists:get_value(Key, P)]) end, \
+        P1 = lists:keystore(modules, 1, lists:keystore(registered, 1, P, {registered, Add(registered, s_group)}), {modules, Add(modules, s_group)}), \
+        ok = file:write_file(F, io_lib:format("~p.~n", [{application, kernel, P1}])), halt().'; \
+    cp /tmp/sd-kernel/PATCHES /usr/local/lib/erlang/SD_PORT_PATCHES; rm -rf /tmp/sd-kernel

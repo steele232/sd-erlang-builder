@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Create (or refresh) build/otp29-kernel: lib/kernel of upstream OTP 29.1.2 as a
+# small git repo with the port patches applied as commits, for editing and
+# regenerating patches/otp29/*.patch with `git format-patch`.
+#   bin/sd-port-tree           fresh tree, patches applied
+#   bin/sd-port-tree --base    fresh tree, no patches
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TAG=upstream-OTP-29.1.2
+T="$ROOT/build/otp29-kernel"
+rm -rf "$T"; mkdir -p "$T"
+git -C "$ROOT/archive/release-otp.git" archive "$TAG" lib/kernel | tar -x -C "$T"
+cd "$T"
+git init -q && git add -A && git -c user.name=upstream -c user.email=upstream@invalid commit -qm "$TAG lib/kernel"
+git tag base
+if [ "${1:-}" != --base ]; then
+  shopt -s nullglob
+  for p in "$ROOT"/patches/otp29/*.patch; do git am -q "$p"; done
+fi
+git log --oneline | head -20

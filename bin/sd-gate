@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Milestone gate for an SD Erlang port image (the goal's verification stack):
+#   L3 demo3 + demo15, L1 (200 cases, C4 on) + regression replays + 40-case
+#   profile, P18 vs 19.3, L2 vs 19.3 outcome sets (all keys and core keys),
+#   L5 free-node equivalence vs stock 29.1.2. TLA+ models: bin/sd-tla.
+#   bin/sd-gate IMAGE LABEL          (REPLAYS="file.eterm ..." from test/corpus)
+# Logs in test-results/gate-LABEL/; read the summary lines on stdout.
+set -u
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+IMG=${1:?image}; TAG=${2:?label}; S="$ROOT/test-results/gate-$TAG"; mkdir -p "$S"
+T=test-results/pbt; G='["/pbt/out/golden-v1-19.3.eterm", "/pbt/out/golden-v1-19.3-k1.eterm", "/pbt/out/golden-v1-19.3-k2.eterm", "/pbt/out/golden-v1-19.3-k3.eterm"]'
+export SD_DEMO_RUNTIME=$IMG SD_DEMO_IMAGE=localhost/sd-demo:$TAG SD_DEMO_ERL_FLAGS="${SD_DEMO_ERL_FLAGS:-}"
+bin/sd-demo down >/dev/null 2>&1; bin/sd-demo up >/dev/null 2>&1
+bin/sd-demo scenario > $S/demo3.txt 2>&1; echo "demo3: $(grep RESULT $S/demo3.txt)"; bin/sd-demo down >/dev/null 2>&1
+bin/sd-demo15 down >/dev/null 2>&1; bin/sd-demo15 up >/dev/null 2>&1
+bin/sd-demo15 scenario > $S/demo15.txt 2>&1; echo "demo15: $(grep RESULT $S/demo15.txt)"; grep -B1 "FAIL" $S/demo15.txt | grep "^==" | sed 's/^/  failed: /'
+bin/sd-demo15 down >/dev/null 2>&1
+bin/sd-pbt 200 $IMG > $S/l1.txt 2>&1; echo "L1: $(grep -m1 -o 'OK: Passed [0-9]* test(s)\|Failed: After [0-9]* test(s)' $S/l1.txt)"
+for c in ${REPLAYS:-}; do cp test/corpus/$c $T/; echo "replay $c: $(bin/sd-pbt eval "sd_pbt:replay_stats(\"/pbt/out/$c\", 10)" $IMG 2>&1 | grep -A6 '^replay_stats' | tr -s ' \n' ' ' | sed 's/.*x10: //')"; done
+bin/sd-pbt cases 40 $IMG 2>&1 | grep -A8 "per-case" | tr -s ' \n' ' '; echo
+bin/sd-pbt eval 'sd_pbt_gapi:run()' $IMG 2>&1 | grep "^P18" | sed 's/@pbt\.sd\.lab//g' > $S/p18.txt; echo "P18 lines differing from 19.3: $(diff <(tail -n +2 $T/p18-sd193.txt) $S/p18.txt | grep -c '^>')"
+bin/sd-pbt eval "sd_diff:compare_set(\"/pbt/out/corpus-v1.eterm\", $G, \"/pbt/out/l2-$TAG.eterm\")" $IMG 2>&1 | grep "outcome-set"
+echo "L2 visibility: $(escript test/pbt/sd_l2_vis.escript $T/l2-$TAG.eterm $T/golden-v1-19.3.eterm $T/golden-v1-19.3-k1.eterm $T/golden-v1-19.3-k2.eterm $T/golden-v1-19.3-k3.eterm 2>&1 | tr -s ' \n' ' ')"
+for K in "" own_s_groups,s_groups,names; do echo "L2 keys=${K:-all}: $(L2_KEYS=$K escript test/pbt/sd_l2_why.escript $T/l2-$TAG.eterm $T/golden-v1-19.3.eterm $T/golden-v1-19.3-k1.eterm $T/golden-v1-19.3-k2.eterm $T/golden-v1-19.3-k3.eterm 2>&1 | head -6 | tr -s ' \n' ' ')"; done
+bin/sd-pbt eval "sd_free_equiv:record(\"/pbt/out/free-corpus-v1.eterm\", \"/pbt/out/free-$TAG.eterm\")" $IMG > $S/l5rec.txt 2>&1
+(cd test/pbt && erlc -I . sd_free_equiv.erl sd_compat.erl)
+erl -noshell -pa "$ROOT/test/pbt" -eval "sd_free_equiv:compare(\"$T/free-corpus-v1.eterm\", \"$T/free-stock29.eterm\", \"$T/free-$TAG.eterm\"), halt()." 2>&1 | grep "identical\|modulo"
+echo GATE_DONE
