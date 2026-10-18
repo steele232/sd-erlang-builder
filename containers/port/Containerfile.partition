@@ -1,0 +1,9 @@
+# Test-only image: a port runtime plus iptables, so the POP scenario
+# (bin/sd-pop) can cut single node pairs (real pairwise partitions; containers
+# run with --cap-add NET_ADMIN). Never a deliverable.
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/* \
+    && iptables --version > /SD_IPTABLES_VERSION
+COPY test/pop/ /pop/src/
+RUN mkdir -p /pop/ebin && erlc -o /pop/ebin /pop/src/*.erl

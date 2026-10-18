@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# POP1 acceptance scenario (decision D-5): a real pairwise partition inside
+# one s_group, on 4 nodes (a, r, x, y). See test/pop/sd_pop.erl.
+#   bin/sd-pop [RUNTIME_IMAGE]   default localhost/sd-erlang:29.1.2-sd-kernel
+# Runs the scenario twice (register on a first, then on x first; the last
+# writer is what r holds during the partition). Exit 0 iff both runs keep g2
+# unaffected and converge g1 after the heal. SD_POP_ORDER=one_order to run one.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="${1:-localhost/sd-erlang:29.1.2-sd-kernel}"
+IMG=localhost/sd-pop:$(echo "$RUNTIME" | sed 's/.*://')
+NET=sd-pop; SECRET=sd-pop-cookie; NODES=(a r x y)
+TICK=4
+
+podman build --quiet --build-arg RUNTIME_IMAGE="$(podman image inspect "$RUNTIME" --format '{{.Id}}')" \
+  -f "$ROOT/containers/port/Containerfile.partition" -t "$IMG" "$ROOT" >/dev/null
+down() { for n in "${NODES[@]}"; do podman rm -f "pop-$n" >/dev/null 2>&1 || true; done
+         podman network rm "$NET" >/dev/null 2>&1 || true; podman secret rm "$SECRET" >/dev/null 2>&1 || true; }
+ip_of() { podman inspect "pop-$1" --format "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}"; }
+step() {  # Fun -> prints, returns 0 iff the step returned ok
+  podman exec pop-r erl -noshell -hidden -name "drv$RANDOM@r.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
+    -eval "R = (catch sd_pop:$1()), io:format(\"step $1: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
+}
+cut()  { podman exec pop-a iptables -A INPUT -s "$(ip_of x)" -j DROP; podman exec pop-a iptables -A OUTPUT -d "$(ip_of x)" -j DROP
+         podman exec pop-x iptables -A INPUT -s "$(ip_of a)" -j DROP; podman exec pop-x iptables -A OUTPUT -d "$(ip_of a)" -j DROP; }
+uncut() { podman exec pop-a iptables -F; podman exec pop-x iptables -F; }
+run_once() {  # order
+  down
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F' | podman secret create "$SECRET" - >/dev/null
+  podman network create --internal "$NET" >/dev/null
+  for n in "${NODES[@]}"; do
+    podman run -d --name "pop-$n" --hostname "$n.pop.lab" --network "$NET" --network-alias "$n.pop.lab" \
+      --cap-add NET_ADMIN --init \
+      --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+      "$IMG" erl -noshell -name "$n@$n.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin >/dev/null
+  done
+  sleep 3
+  local r=0
+  echo "--- order: $1"
+  step setup || r=1
+  cut; echo "cut a <-> x"
+  step "$1" || r=1
+  step check_g2 || r=1
+  uncut; echo "healed a <-> x"
+  step heal || r=1
+  step check_converged || r=1
+  return $r
+}
+rc=0
+for o in ${SD_POP_ORDER:-split_register split_register_rev}; do run_once "$o" || rc=1; done
+[ "${SD_POP_KEEP:-}" = 1 ] || down
+echo "POP RESULT: $([ $rc = 0 ] && echo pass || echo FAIL)"
+exit $rc
