@@ -2,7 +2,8 @@
 # Milestone gate for an SD Erlang port image (the goal's verification stack):
 #   L3 demo3 + demo15, L1 (200 cases, C4 on) + regression replays + 40-case
 #   profile, P18 vs 19.3, L2 vs 19.3 outcome sets (all keys and core keys),
-#   L5 free-node equivalence vs stock 29.1.2. TLA+ models: bin/sd-tla.
+#   L5 free-node equivalence vs stock 29.1.2, POP1 partition scenario
+#   (bin/sd-pop, both orders). TLA+ models: bin/sd-tla.
 #   bin/sd-gate IMAGE LABEL          (REPLAYS="file.eterm ..." from test/corpus)
 # Logs in test-results/gate-LABEL/; read the summary lines on stdout.
 set -u
@@ -25,4 +26,5 @@ for K in "" own_s_groups,s_groups,names; do echo "L2 keys=${K:-all}: $(L2_KEYS=$
 bin/sd-pbt eval "sd_free_equiv:record(\"/pbt/out/free-corpus-v1.eterm\", \"/pbt/out/free-$TAG.eterm\")" $IMG > $S/l5rec.txt 2>&1
 (cd test/pbt && erlc -I . sd_free_equiv.erl sd_compat.erl)
 erl -noshell -pa "$ROOT/test/pbt" -eval "sd_free_equiv:compare(\"$T/free-corpus-v1.eterm\", \"$T/free-stock29.eterm\", \"$T/free-$TAG.eterm\"), halt()." 2>&1 | grep "identical\|modulo"
+bin/sd-pop "$IMG" > $S/pop.txt 2>&1; echo "POP: $(grep 'POP RESULT' $S/pop.txt)"
 echo GATE_DONE

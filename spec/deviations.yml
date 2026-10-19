@@ -620,6 +620,11 @@
   fidelity_target: S
   port_policy: may_differ        # vs 19.3 under link failures only; stock nodes must_match_stock29
   normalization: L2 corpora contain no link failures, so no L2 effect; failure scenarios are judged against the models
+  port_status: >-
+    kernel port milestone 3 (patches/otp29/0002): per-group lost reports with
+    link incarnations, logical removal, and a merge under a joint lock with
+    19.3's conflict resolution (U1). bin/sd-pop passes both orders; on
+    milestone 1 the x-first order diverged permanently.
 
 - id: GG1
   layers: [port]

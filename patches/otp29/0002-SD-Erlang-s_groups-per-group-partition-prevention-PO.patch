@@ -1,15 +1,15 @@
-From 6e329bf5d48aab042df9435b38a9119f8831e198 Mon Sep 17 00:00:00 2001
+From 21e957b3590743481fddd7c408517379a6d8679a Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan.steele232@gmail.com>
 Date: Sat, 17 Oct 2026 18:58:22 -0700
 Subject: [PATCH 2/2] SD Erlang s_groups: per-group partition prevention (POP1)
  and partition merge (R-NS-1, U1)
 
 ---
- lib/kernel/src/s_group.erl | 256 +++++++++++++++++++++++++++++++------
- 1 file changed, 217 insertions(+), 39 deletions(-)
+ lib/kernel/src/s_group.erl | 261 +++++++++++++++++++++++++++++++------
+ 1 file changed, 222 insertions(+), 39 deletions(-)
 
 diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
-index 8c471dc..6a1dc26 100644
+index 8c471dc..047d51c 100644
 --- a/lib/kernel/src/s_group.erl
 +++ b/lib/kernel/src/s_group.erl
 @@ -47,16 +47,29 @@
@@ -73,11 +73,13 @@ index 8c471dc..6a1dc26 100644
  
  groups() -> view_groups().
  all_names() -> gen_server:call(?MODULE, names, ?T).
-@@ -312,12 +334,32 @@ init([]) ->
+@@ -312,12 +334,34 @@ init([]) ->
                                                            node_type => all}),
                      Peers = lists:usort(lists:append(maps:values(Groups))) -- [node()],
                      _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Peers] end),
-+                    {ok, _} = timer:send_interval(?MERGE_TICK_MS, merge_tick),
++                    %% Not timer:send_interval/2: timer_server is started after
++                    %% the kernel supervisor's children, so it would deadlock boot.
++                    _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
                      {ok, #st{groups = Groups,
                               names = maps:map(fun(_, _) -> #{} end, Groups)}}
              end
@@ -106,7 +108,7 @@ index 8c471dc..6a1dc26 100644
  handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
  handle_call({add_attributes, As}, _F, S) ->
      {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
-@@ -330,7 +372,12 @@ handle_call({install, G, Members, Names}, _F, S) ->
+@@ -330,7 +374,12 @@ handle_call({install, G, Members, Names}, _F, S) ->
                                  S#st{names = maps:put(G, maps:get(G, S#st.names, #{}),
                                                        S#st.names)}),
                       maps:to_list(Names)),
@@ -120,7 +122,7 @@ index 8c471dc..6a1dc26 100644
  handle_call({mesh, G}, _F, S) ->
      %% D-1 (spec/deviations.yml O3): a link to a fellow member that is hidden
      %% because it predates the shared group is re-established, so that it is
-@@ -349,19 +396,45 @@ handle_call({mesh, G}, _F, S) ->
+@@ -349,19 +398,45 @@ handle_call({mesh, G}, _F, S) ->
      {reply, ok, S};
  handle_call({drop, G}, _F, S) ->
      S1 = set_groups(maps:remove(G, S#st.groups), S#st{names = maps:remove(G, S#st.names)}),
@@ -172,7 +174,7 @@ index 8c471dc..6a1dc26 100644
  handle_cast({pid_down, G, Name, Pid}, S) ->
      {noreply, del_pid_name(G, Name, Pid, S)};
  %% Free namespace: Node answered that it is free; join global's partition
-@@ -404,13 +477,9 @@ handle_info({'DOWN', Ref, process, Pid, _}, S) ->
+@@ -404,13 +479,9 @@ handle_info({'DOWN', Ref, process, Pid, _}, S) ->
          error -> {noreply, S}
      end;
  handle_info({nodeup, N, #{connection_id := CId} = Info}, S0) ->
@@ -189,7 +191,7 @@ index 8c471dc..6a1dc26 100644
      _ = case maps:get(node_type, Info, visible) of
              visible -> check_free(N, S);
              hidden -> ok
-@@ -421,10 +490,26 @@ handle_info({nodedown, N, _Info}, S0) ->
+@@ -421,10 +492,29 @@ handle_info({nodedown, N, _Info}, S0) ->
      %% this same nodedown (partition prevention), and must get the answer
      %% that held for the lost connection. A later check_free/2 or leaving
      %% the free namespace removes it.
@@ -216,10 +218,13 @@ index 8c471dc..6a1dc26 100644
 +    {noreply, S3};
 +handle_info(merge_tick, S) ->
 +    {noreply, merge_tick(S)};
++handle_info(merge_timer, S) ->
++    _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
++    {noreply, merge_tick(S)};
  handle_info(_, S) -> {noreply, S}.
  
  terminate(_, _) -> ok.
-@@ -535,6 +620,102 @@ static_groups({ok, Defs}) when is_list(Defs) ->
+@@ -535,6 +625,102 @@ static_groups({ok, Defs}) when is_list(Defs) ->
      end;
  static_groups({ok, Other}) -> {error, {bad_s_groups, Other}}.
  
@@ -322,7 +327,7 @@ index 8c471dc..6a1dc26 100644
  %%--------------------------------------------------------------------
  %% Name tables
  %%--------------------------------------------------------------------
-@@ -562,20 +743,10 @@ del_pid_name(G, Name, Pid, S) ->
+@@ -562,20 +748,10 @@ del_pid_name(G, Name, Pid, S) ->
          _ -> S
      end.
  
@@ -347,7 +352,7 @@ index 8c471dc..6a1dc26 100644
      end.
  
  del_name(G, Name, S) ->
-@@ -586,10 +757,17 @@ del_name(G, Name, S) ->
+@@ -586,10 +762,17 @@ del_name(G, Name, S) ->
  %% Helpers
  %%--------------------------------------------------------------------
  
