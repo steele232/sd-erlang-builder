@@ -35,6 +35,11 @@ Notation as in D3.3 §4. A down node is still in `nds`, marked dead.
 
 ## Open questions for the reviewer
 
+**Answered 2026-10-19 (spec/DECISIONS.md, D-7 to D-10):** 1 yes; 2 yes;
+3 is superseded by D-7 (the record is seeds plus a claim; the current members
+win through the merge) and D-8 (group incarnations, OR-set membership).
+
+
 1. While `ni` is down, are `own_nodes/1` on survivors still expected to include
    `ni`? (19.3: yes.)
 2. Are names registered by survivors *for* pids on `ni` (`register_name` with a

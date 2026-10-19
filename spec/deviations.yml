@@ -645,3 +645,35 @@
   port_policy: must_match        # plus the new function (additive)
   normalization: none
 
+- id: MR1
+  layers: [S, port]
+  source: decision D-7 (2026-10-19)
+  summary: >-
+    A returning node's membership record (static config or -rsconfig) is
+    seeds plus a claim, resolved by the merge against the current members;
+    19.3 trusts the record as-is.
+  fidelity_target: S
+  port_policy: may_differ
+  normalization: none
+
+- id: MS1
+  layers: [port]
+  source: decision D-8 (2026-10-19)
+  summary: >-
+    Group identity is name plus incarnation; member lists are OR-sets merged
+    across partitions. The -rsconfig file format changes accordingly.
+  fidelity_target: S
+  port_policy: may_differ        # vs 19.3 under partitions, rejoin and re-created groups; normal operation unchanged
+  normalization: L2 corpora have none of these situations
+
+- id: AE1
+  layers: [port]
+  source: decision D-9 (2026-10-19)
+  summary: >-
+    Anti-entropy inside s_group: a periodic hash exchange of each group's name
+    table and member list with a random in-sync peer; a mismatch triggers the
+    merge; repairs are logged. Tunable and disableable.
+  fidelity_target: S
+  port_policy: may_differ        # additive; 19.3 has no repair loop
+  normalization: none
+

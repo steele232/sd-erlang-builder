@@ -208,6 +208,66 @@ unconditionally.
 
 **Decision (2026-10-17, Jonathan):** accept the recommendation.
 
+## D-7 to D-10. Failure, rejoin and membership semantics (M1 and beyond)
+
+Decided by the user on 2026-10-19, after the discussion recorded here. All of
+it is modelled and checked in TLA+ before any code changes.
+
+**M1 question 1: does a down node stay a member? Yes.** Membership is
+configuration, not liveness. Sources:
+- D3.3 §2.1: "A node may join or leave s groups, so we need to record s group
+  membership information to correctly restart a failed node";
+- D3.3 §2.3: "reliable s groups leave distributed Erlang recovery mechanisms
+  unchanged";
+- `global_group` lineage: unreachable members go to `no_contact` but stay
+  listed;
+- membership changes only through explicit calls.
+
+In the port, a down node stays in `own_nodes/1` but leaves the in-sync set,
+so locks and registrations never wait for it.
+
+**M1 question 2: are names of a down node's processes removed? Yes,**
+everywhere, including names that other (surviving) nodes registered for
+those processes. This is stock `global`'s rule; the port implements it with
+liveness-based cleanup (patch 0006).
+
+**D-7 (M1 question 3): rejoin.** A returning node's record (static config or
+`-rsconfig`) is **seeds plus a claim**, never truth while any member is
+reachable. The claim is resolved by the same merge as any other view, so the
+current members win. With no member reachable (for example a cold start of
+the whole cluster), the claim stands until one is.
+
+**D-8: membership representation.** Each group has an identity of name plus
+**incarnation**: `new_s_group` mints a unique id, so a stale record of a
+deleted (and possibly re-created) group is recognisable. The member list is
+an **observed-remove set** (OR-set, add-wins), merged when partitions meet,
+which avoids the lost-update flaws of version counters:
+- concurrent changes on both sides of a partition are all kept;
+- a remove beats exactly the adds it has seen, so a long-absent node's stale
+  claim loses;
+- identical records (a cold start) merge into themselves.
+
+Tombstones are bounded by the incarnation. The `-rsconfig` file format
+changes accordingly (may differ from 19.3). Precedent: Partisan's default
+membership is an OR-set.
+
+**D-9: anti-entropy inside `s_group`.** Every few seconds, each member sends a
+hash of each group's name table and member list to one random in-sync peer.
+A mismatch triggers the existing merge. It's lightweight (no Merkle trees,
+tables are small), tunable and disableable by a kernel parameter, and every
+repair is logged, because a repair signals a bug elsewhere. Motivation: the
+O5 race left replicas that all believed they were in sync but differed, with
+nothing to repair them. Precedent: PlumDB / `riak_core_metadata` anti-entropy.
+
+**D-10: no "down" status.** Riak needs one because its claimant serialises
+changes; here locks skip unreachable nodes and partition prevention already
+moves dead nodes out of the in-sync set. "Gone for good" is `remove_nodes`.
+
+**Adoption (for the packaging phase):** write a migration guide for OTP
+applications. Consider a `{via, s_group, {Group, Name}}` adapter, so that
+registered `gen_*` processes need a one-line change; check whether 19.3 had
+one first.
+
 ## Design decisions that are already evidence-backed (confirm or overrule)
 
 | Item | Evidence | Status |
@@ -219,7 +279,7 @@ unconditionally.
 | O5 fix must be the *whole* stock merge protocol, not a retarget | `0001` passes its repro but A/B p = 0.003 regression | 0001 rejected |
 | RS1: persist every `-rsconfig` change synchronously | `test/pbt/sd_pbt_rsconfig.erl`, D3.3 ch. 2 | requirement R-PERS-1 |
 | AT1: single attribute store | `test/pbt/sd_pbt_attrs.erl`, JPDC'16 §3 | requirement R-ATTR-1 |
-| M1: add failure semantics to the executable model (oracle change) | `spec/proposals/M1-failures.md`, D3.3 Fig. 5.4 `node_down_up` | **deferred by the user (2026-10-19)**: a hardening improvement for later. Failure behaviour is covered meanwhile by `bin/sd-pop` and the demos' crash steps |
+| M1: add failure semantics to the executable model (oracle change) | `spec/proposals/M1-failures.md`, D3.3 Fig. 5.4 `node_down_up` | **decided (2026-10-19)**: see D-7 to D-10 below; to be implemented in the hardening phase |
 
 ## Links
 
