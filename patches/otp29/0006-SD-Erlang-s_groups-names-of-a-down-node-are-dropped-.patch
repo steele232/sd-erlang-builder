@@ -1,7 +1,7 @@
-From 6d579396b11792ff69746e9b37eda74463fec114 Mon Sep 17 00:00:00 2001
+From 61c33bb0586db293239921ce7704290787177ffa Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 09:53:57 -0700
-Subject: [PATCH 6/6] SD Erlang s_groups: names of a down node are dropped by
+Subject: [PATCH 6/7] SD Erlang s_groups: names of a down node are dropped by
  liveness, consistently across the partition; merges never carry dead pids
 
 ---

@@ -17,6 +17,9 @@
 %%                   (links kept by remove_nodes/2, O1 must_match). C3 counts
 %%                   hidden links too, so without C4 a fully meshed cluster
 %%                   passes L1.
+%%   C5 co-member    (ports only; decision D-1, spec/deviations.yml O3) two
+%%      visibility   members of a common group that are connected are VISIBLY
+%%                   connected. 19.3 keeps such links hidden by design (O3).
 %%
 %% Not compared (M constructs with no stable observable in I): free normal
 %% group partitions and their namespaces, node visibility (hidden vs normal).
@@ -53,7 +56,11 @@ observe_node(N, PidMaps, Driverless) ->
               Vs when is_list(Vs) -> lists:sort(Driverless(Vs));
               _ -> []
           end,
-    #{groups => Groups, names => Names, conns => Conns, vis => Vis}.
+    Hid = case rpc:call(N, erlang, nodes, [hidden]) of
+              Hs when is_list(Hs) -> lists:sort(Driverless(Hs));
+              _ -> []
+          end,
+    #{groups => Groups, names => Names, conns => Conns, vis => Vis, hidden_conns => Hid}.
 
 group_names(N, G, PidMaps) ->
     case is_port_runtime(N) of
@@ -91,6 +98,10 @@ node_diff(N, Model, #{groups := IGroups, names := INames, conns := IConns} = Obs
     [{N, c2_namespace, {model, MNames}, {impl, INames}}
      || is_list(IGroups), MGroups =:= IGroups, MNames =/= INames] ++
     [{N, c3_connections_missing, MConns -- IConns} || (MConns -- IConns) =/= []] ++
+    [{N, c5_comember_link_hidden, Hid}
+     || is_port_runtime(N) orelse os:getenv("SD_PBT_C5_ALL") =:= "1",   % override: validate C5 on 19.3
+        Hid <- [[M || M <- maps:get(hidden_conns, Obs, []), lists:member(M, comembers(N, Model))]],
+        Hid =/= []] ++
     [{N, c4_visible_outside_group, Bad}
      || os:getenv("SD_PBT_VISIBILITY", "1") =/= "0",
         Bad <- [[M || M <- maps:get(vis, Obs, []),
@@ -185,4 +196,8 @@ known_on(N, G) ->
         true -> rpc:call(N, s_group, known_peers, [G]);
         false -> rpc:call(N, global, get_known_s_group, [G])
     end.
+
+comembers(N, Model) ->
+    lists:usort(lists:append([Nis || {_G, Nis, _} <- sd_model:groups(Model), lists:member(N, Nis)]))
+        -- [N].
 

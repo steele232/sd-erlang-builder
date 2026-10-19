@@ -76,6 +76,7 @@ podman run --rm --init --network sd-pbt --hostname pbt.sd.lab \
   ${SD_DIFF_SETTLE_CAP_MS:+-e SD_DIFF_SETTLE_CAP_MS="$SD_DIFF_SETTLE_CAP_MS"} \
   ${SD_PBT_NODE_ARGS:+-e SD_PBT_NODE_ARGS="$SD_PBT_NODE_ARGS"} \
   ${SD_PBT_VISIBILITY:+-e SD_PBT_VISIBILITY="$SD_PBT_VISIBILITY"} \
+  ${SD_PBT_C5_ALL:+-e SD_PBT_C5_ALL="$SD_PBT_C5_ALL"} \
   -v "$OUT:/pbt/out" \
   "$TAG" erl -noshell -hidden -name driver@pbt.sd.lab -pa /pbt/ebin -eval "
     R = (catch $EXPR),

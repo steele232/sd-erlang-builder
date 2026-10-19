@@ -1,0 +1,52 @@
+From d7989fb6f6b5eef501878ef3ff1b3e6a7b01df43 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 10:34:35 -0700
+Subject: [PATCH 7/7] SD Erlang s_groups: D-1 eventual, re-dial hidden links to
+ fellow members on the tick
+
+---
+ lib/kernel/src/s_group.erl | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 3a2df10..bfd1818 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -777,6 +777,34 @@ leave_partition(G, V, S) ->
+ %% merged in. The smaller node of the pair initiates; one merge per group at
+ %% a time. Merges that cannot run yet (not fully connected) are retried.
+ merge_tick(S) ->
++    S1 = mesh_tick(S),
++    merge_tick1(S1).
++
++%% D-1, made eventual: a link to a fellow member that is hidden (it was set up
++%% before one end had installed the group, e.g. while install's own connect
++%% was still in its handshake) is re-dialled, once the other end also lists
++%% this node as a fellow member, so it comes back visible.
++mesh_tick(S) ->
++    Mine = lists:usort(lists:append(maps:values(S#st.groups))) -- [node()],
++    Candidates = [N || N <- nodes(hidden), lists:member(N, Mine),
++                       not maps:is_key(N, S#st.redial)],
++    case Candidates of
++        [] -> S;
++        _ ->
++            Self = self(),
++            _ = spawn(fun() ->
++                              Ready = [N || N <- Candidates,
++                                            lists:member(node(),
++                                                         try erpc:call(N, ?MODULE, own_nodes, [], ?T)
++                                                         catch _:_ -> []
++                                                         end)],
++                              gen_server:call(Self, {redial, Ready}, ?T),
++                              [redial(N) || N <- Ready]
++                      end),
++            S
++    end.
++
++merge_tick1(S) ->
+     Connected = nodes(connected),
+     maps:fold(
+       fun(G, Members, Acc) ->
+-- 
+2.50.1 (Apple Git-155)
+
