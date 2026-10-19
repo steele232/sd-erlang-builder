@@ -1,0 +1,49 @@
+From 23b039d57944acb84b7736d829c801e71ff168b6 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 08:14:14 -0700
+Subject: [PATCH 3/3] SD Erlang s_groups: -rsconfig persists every membership
+ change (R-PERS-1)
+
+---
+ lib/kernel/src/s_group.erl | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 047d51c..72c98ec 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -529,6 +529,7 @@ code_change(_, S, _) -> {ok, S}.
+ %% into global's (free) namespace.
+ set_groups(New, #st{groups = Old} = S) ->
+     ets:insert(?VIEW, {groups, New}),
++    ok = persist(New),
+     S1 = S#st{groups = New},
+     case {map_size(Old) =:= 0, map_size(New) =:= 0} of
+         {true, false} ->                                     % joined: no longer free
+@@ -549,6 +550,23 @@ set_groups(New, #st{groups = Old} = S) ->
+             S1
+     end.
+ 
++%% -rsconfig (D3.3 ch. 2, requirement R-PERS-1): record every membership
++%% change in <node>.config in the working directory, in the launch-config
++%% format, so that `-config <node>` restores it after a restart. Written
++%% before the change is acknowledged, and atomically (temporary file + rename);
++%% 19.3 skipped changes made within the same second as the last write (RS1).
++persist(Groups) ->
++    case init:get_argument(rsconfig) of
++        {ok, _} ->
++            File = atom_to_list(node()) ++ ".config",
++            Tmp = File ++ ".tmp",
++            Conf = [{kernel, [{s_groups, [{G, normal, Ns} || {G, Ns} <- lists:sort(maps:to_list(Groups))]}]}],
++            ok = file:write_file(Tmp, io_lib:format("~p.~n", [Conf])),
++            ok = file:rename(Tmp, File);
++        error ->
++            ok
++    end.
++
+ drop_free_peer(Node, S) ->
+     case ets:lookup(?VIEW, {free_peer, Node}) of
+         [{_, CId}] ->
+-- 
+2.50.1 (Apple Git-155)
+

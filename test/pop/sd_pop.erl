@@ -41,7 +41,19 @@ split_register(Order) ->
     {RA, RX} = case Order of [a, x] -> {R1, R2}; [x, a] -> {R2, R1} end,
     io:format("register on a: ~p (pid on a ~p), on x: ~p (pid on x ~p)~n", [RA, PA, RX, PX]),
     io:format("tables right after: ~p~n", [state()]),
-    ok.
+    links_intact().
+
+%% POP1 is logical: partition prevention never cuts a link. r keeps both of
+%% its g1 links, and x keeps its g2 link to y (the link x shares through
+%% another group), during the cut.
+links_intact() ->
+    [A, R, X, Y] = [?N(a), ?N(r), ?N(x), ?N(y)],
+    Want = [{R, A}, {R, X}, {X, Y}],
+    Down = [{P, Q} || {P, Q} <- Want, not lists:member(Q, rpc:call(P, erlang, nodes, []))],
+    case Down of
+        [] -> ok;
+        _ -> io:format("LINKS CUT during the partition: ~p~n", [Down]), {links_cut, Down}
+    end.
 
 check_g2() ->
     [X, Y] = [?N(x), ?N(y)],

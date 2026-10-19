@@ -219,7 +219,7 @@ unconditionally.
 | O5 fix must be the *whole* stock merge protocol, not a retarget | `0001` passes its repro but A/B p = 0.003 regression | 0001 rejected |
 | RS1: persist every `-rsconfig` change synchronously | `test/pbt/sd_pbt_rsconfig.erl`, D3.3 ch. 2 | requirement R-PERS-1 |
 | AT1: single attribute store | `test/pbt/sd_pbt_attrs.erl`, JPDC'16 §3 | requirement R-ATTR-1 |
-| M1: add failure semantics to the executable model (oracle change) | `spec/proposals/M1-failures.md`, D3.3 Fig. 5.4 `node_down_up` | **needs review** (3 open questions inside) |
+| M1: add failure semantics to the executable model (oracle change) | `spec/proposals/M1-failures.md`, D3.3 Fig. 5.4 `node_down_up` | **deferred by the user (2026-10-19)**: a hardening improvement for later. Failure behaviour is covered meanwhile by `bin/sd-pop` and the demos' crash steps |
 
 ## Links
 

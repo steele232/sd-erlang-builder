@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Rebase check for patches/otp29: fetch the upstream files the patches touch
+# (raw.githubusercontent.com, read-only) for each REF and `git apply --check`
+# the series. Prints per ref: clean | conflicts in <files>.
+#   bin/sd-port-rebase-check [REF ...]   default: OTP-29.0.6 OTP-29.1 OTP-29.1.2 master
+set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FILES="lib/kernel/src/global.erl lib/kernel/src/global_group.erl lib/kernel/src/kernel.erl lib/kernel/src/kernel.app.src"
+W="$(mktemp -d)"; trap 'rm -rf "$W"' EXIT
+for REF in ${@:-OTP-29.0.6 OTP-29.1 OTP-29.1.2 master}; do
+  T="$W/$REF"; mkdir -p "$T"; ok=1
+  for f in $FILES; do
+    mkdir -p "$T/$(dirname "$f")"
+    curl -sfL -o "$T/$f" "https://raw.githubusercontent.com/erlang/otp/$REF/$f" || { echo "$REF: cannot fetch $f"; ok=0; }
+  done
+  [ $ok = 1 ] || continue
+  (cd "$T" && git init -q && git add -A && git -c user.name=x -c user.email=x@invalid commit -qm base)
+  out=""; for p in "$ROOT"/patches/otp29/*.patch; do
+    if ! (cd "$T" && git am -q --3way "$p" >/dev/null 2>&1); then
+      out="$out $(basename "$p"): $(cd "$T" && git diff --name-only --diff-filter=U | tr '\n' ' ')"; (cd "$T" && git am --abort >/dev/null 2>&1); break
+    fi
+  done
+  echo "$REF: ${out:-clean (all $(ls "$ROOT"/patches/otp29/*.patch | wc -l | tr -d ' ') patches apply)}"
+done
