@@ -121,3 +121,4 @@ Not modellable here: the boot deadlock (an OTP startup-ordering fact, caught
 by the image build). The join race (`l1-c4-joinrace`) concerns the
 implementation's transient links vs the abstract model's connection set, and
 is covered by L1's C4 check and its regression replay.
+| `SGroupMembership.tla` | D-7 + D-8, before implementation: partitions, crashes, restarts from the record | a version counter loses one side's changes (`_lww`); 19.3-style restart re-asserting its record overrides a removal (`_reassert`) | OR-set membership with records merged as claims (`_orset_claim`) |
