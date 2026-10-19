@@ -116,9 +116,9 @@ happened, rather than trusting it.
 | `SGroupLockScope.tla` | name operations and merges vs the group lock's scope | 0009: a registration writes to the partition it read before the lock, and a merge in between leaves a member without the name (`_old`) | pass (`_new`) |
 | `SGroupNameGC.tla` | names of processes on a node that crashes, restarts (incarnations) or is re-dialled; asynchronous `nodedown`/`DOWN` | the milestone-1 `noconnection` broadcast loses a live name (`_ncbroadcast`); pre-0005 local delete on `nodedown` diverges replicas (`_nodedown`); the first 0006 attempt keeps a dead pid (`_deferred`) | liveness-based, propagated cleanup: Agree, NoLiveLost, NoDeadKept all hold (`_liveness`) |
 | `SGroupVisibility.tla` | visibility fixed at handshake; install ordering; D-1 re-dials | pre-0007 one-shot member re-dial (`_oneshot_mesh`); pre-0004 no free re-dial (`_no_free_redial`); **0004's one-shot free re-dial, found by this model** (`_oneshot_free_redial`, fixed in 0011) | both re-dials eventual (`_current`) |
+| `SGroupMembership.tla` | D-7 + D-8, before implementation: partitions, crashes, restarts from the record | a version counter loses one side's changes (`_lww`); 19.3-style restart re-asserting its record overrides a removal (`_reassert`) | OR-set membership with records merged as claims (`_orset_claim`) |
 
 Not modellable here: the boot deadlock (an OTP startup-ordering fact, caught
 by the image build). The join race (`l1-c4-joinrace`) concerns the
 implementation's transient links vs the abstract model's connection set, and
 is covered by L1's C4 check and its regression replay.
-| `SGroupMembership.tla` | D-7 + D-8, before implementation: partitions, crashes, restarts from the record | a version counter loses one side's changes (`_lww`); 19.3-style restart re-asserting its record overrides a removal (`_reassert`) | OR-set membership with records merged as claims (`_orset_claim`) |
