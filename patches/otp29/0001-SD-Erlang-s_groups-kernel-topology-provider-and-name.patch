@@ -1,7 +1,7 @@
-From a3cb5760fba3582e0bbbff2c0572b8c77d987a81 Mon Sep 17 00:00:00 2001
+From 7768fa8dc56571f2f5bd362feff9ba22f6c631bb Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Sat, 17 Oct 2026 17:07:17 -0700
-Subject: [PATCH 01/12] SD Erlang s_groups: kernel topology provider and
+Subject: [PATCH 01/13] SD Erlang s_groups: kernel topology provider and
  namespaces (design B, milestone 1)
 
 ---

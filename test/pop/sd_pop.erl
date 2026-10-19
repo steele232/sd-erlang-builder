@@ -5,6 +5,7 @@
 %%   g1 = {a, r, x}   the partitioned group (r keeps both links)
 %%   g2 = {x, y}      must be unaffected (P8 / Collateral)
 -module(sd_pop).
+-export([trace_tla/1]).
 -export([setup/0, split_register/0, split_register_rev/0, check_g2/0, heal/0, check_converged/0, state/0]).
 
 -define(N(X), list_to_atom(atom_to_list(X) ++ "@" ++ atom_to_list(X) ++ ".pop.lab")).
@@ -109,3 +110,66 @@ await(What, F, Deadline) ->
                 false -> timer:sleep(200), await(What, F, Deadline)
             end
     end.
+
+%% Trace validation: merge the -s_group_trace logs of g1's members by time
+%% and print a self-contained TLA+ module that replays them; TLC checks the
+%% spec invariant InSyncAgree wherever no operation holds the group lock
+%% (spec/tla/README.md, "Trace validation").
+trace_tla(Run) ->
+    Members = [?N(a), ?N(r), ?N(x)],
+    Short = fun(N) -> hd(string:tokens(atom_to_list(N), "@")) end,
+    Evs = lists:keysort(1, [{T, Short(M), Ev} || M <- Members,
+                                                 {_, T, Ev} <- rpc:call(M, s_group, i_log, []),
+                                                 g1_event(Ev)]),
+    Q = fun(X) -> [$" | X] ++ "\"" end,
+    Str = fun(A) when is_atom(A) -> Q(atom_to_list(A));
+             (P) when is_pid(P) -> Q(pid_to_list(P));
+             (T) -> Q(lists:flatten(io_lib:format("~0p", [T])))
+          end,
+    Set = fun(L) -> "{" ++ lists:join(", ", [Q(Short(N)) || N <- L]) ++ "}" end,
+    Rec = fun({_, N, {put, g1, Nm, P}}) -> io_lib:format("[k |-> \"put\", n |-> ~s, a |-> ~s, b |-> ~s]", [Q(N), Str(Nm), Str(P)]);
+             ({_, N, {del, g1, Nm, _, _}}) -> io_lib:format("[k |-> \"del\", n |-> ~s, a |-> ~s, b |-> \"\"]", [Q(N), Str(Nm)]);
+             ({_, N, {sync, g1, L}}) -> io_lib:format("[k |-> \"sync\", n |-> ~s, s |-> ~s]", [Q(N), Set(L)]);
+             ({_, N, {op_begin, g1, _, Id}}) -> io_lib:format("[k |-> \"begin\", n |-> ~s, a |-> ~s]", [Q(N), Str(Id)]);
+             ({_, N, {op_end, g1, _, Id}}) -> io_lib:format("[k |-> \"end\", n |-> ~s, a |-> ~s]", [Q(N), Str(Id)])
+          end,
+    Mod = "Trace_" ++ atom_to_list(Run),
+    Body = ["---- MODULE ", Mod, " ----\n",
+            "\\* ", integer_to_list(length(Evs)), " events of g1 from a, r, x (bin/sd-pop, SD_POP_TRACE=1)\n",
+            "EXTENDS Naturals, Sequences, FiniteSets\n",
+            "Nodes == {\"a\", \"r\", \"x\"}\n",
+            "Log == <<\n  ", lists:join(",\n  ", [Rec(E) || E <- Evs]), "\n>>\n",
+            trace_spec(),
+            "====\n"],
+    io:format("TLA-BEGIN~n~s~nTLA-END~n", [Body]),
+    ok.
+
+%% Replays Log; tbl[n] = n's replica of g1 as {name, pid} pairs, K[n] = its
+%% in-sync set, inflight = operations holding the group lock.
+trace_spec() ->
+    "VARIABLES i, tbl, K, inflight\n"
+    "vars == <<i, tbl, K, inflight>>\n"
+    "Init == i = 1 /\\ tbl = [n \\in Nodes |-> {}] /\\ K = [n \\in Nodes |-> {}] /\\ inflight = {}\n"
+    "Step(e) ==\n"
+    "    CASE e.k = \"put\" -> /\\ tbl' = [tbl EXCEPT ![e.n] = {x \\in @ : x[1] # e.a} \\cup {<<e.a, e.b>>}]\n"
+    "                         /\\ UNCHANGED <<K, inflight>>\n"
+    "      [] e.k = \"del\" -> /\\ tbl' = [tbl EXCEPT ![e.n] = {x \\in @ : x[1] # e.a}]\n"
+    "                         /\\ UNCHANGED <<K, inflight>>\n"
+    "      [] e.k = \"sync\" -> /\\ K' = [K EXCEPT ![e.n] = e.s] /\\ UNCHANGED <<tbl, inflight>>\n"
+    "      [] e.k = \"begin\" -> /\\ inflight' = inflight \\cup {e.a} /\\ UNCHANGED <<tbl, K>>\n"
+    "      [] e.k = \"end\" -> /\\ inflight' = inflight \\ {e.a} /\\ UNCHANGED <<tbl, K>>\n"
+    "Next == i <= Len(Log) /\\ Step(Log[i]) /\\ i' = i + 1\n"
+    "Spec == Init /\\ [][Next]_vars\n"
+    "\\* spec/tla/SGroupLockScope.tla InSyncAgree, at every point where no\n"
+    "\\* operation holds the group lock.\n"
+    "InSyncAgree == inflight = {} => \\A n \\in Nodes : \\A m \\in K[n] : tbl[n] = tbl[m]\n"
+    "\\* The whole log was replayed (every event explained by the step relation).\n"
+    "Replayed == <>(i = Len(Log) + 1)\n".
+
+g1_event({put, g1, _, _}) -> true;
+g1_event({del, g1, _, _, _}) -> true;
+g1_event({sync, g1, _}) -> true;
+g1_event({op_begin, g1, _, _}) -> true;
+g1_event({op_end, g1, _, _}) -> true;
+g1_event(_) -> false.
+

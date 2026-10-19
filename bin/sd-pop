@@ -5,6 +5,8 @@
 # Runs the scenario twice (register on a first, then on x first; the last
 # writer is what r holds during the partition). Exit 0 iff both runs keep g2
 # unaffected and converge g1 after the heal. SD_POP_ORDER=one_order to run one.
+# SD_POP_TRACE=1: nodes run with -s_group_trace; after each order the g1 trace
+# is replayed by TLC against the spec invariant (trace validation).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME="${1:-localhost/sd-erlang:29.1.2-sd-kernel}"
@@ -17,9 +19,10 @@ podman build --quiet --build-arg RUNTIME_IMAGE="$(podman image inspect "$RUNTIME
 down() { for n in "${NODES[@]}"; do podman rm -f "pop-$n" >/dev/null 2>&1 || true; done
          podman network rm "$NET" >/dev/null 2>&1 || true; podman secret rm "$SECRET" >/dev/null 2>&1 || true; }
 ip_of() { podman inspect "pop-$1" --format "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}"; }
-step() {  # Fun -> prints, returns 0 iff the step returned ok
+step() {  # Fun or Fun(Args) of sd_pop -> prints, returns 0 iff the step returned ok
+  local e="sd_pop:$1"; case "$1" in *"("*) ;; *) e="$e()" ;; esac
   podman exec pop-r erl -noshell -hidden -name "drv$RANDOM@r.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
-    -eval "R = (catch sd_pop:$1()), io:format(\"step $1: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
+    -eval "R = (catch $e), io:format(\"step $1: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
 }
 cut()  { podman exec pop-a iptables -A INPUT -s "$(ip_of x)" -j DROP; podman exec pop-a iptables -A OUTPUT -d "$(ip_of x)" -j DROP
          podman exec pop-x iptables -A INPUT -s "$(ip_of a)" -j DROP; podman exec pop-x iptables -A OUTPUT -d "$(ip_of a)" -j DROP; }
@@ -32,7 +35,8 @@ run_once() {  # order
     podman run -d --name "pop-$n" --hostname "$n.pop.lab" --network "$NET" --network-alias "$n.pop.lab" \
       --cap-add NET_ADMIN --init \
       --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
-      "$IMG" erl -noshell -name "$n@$n.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin >/dev/null
+      "$IMG" erl -noshell -name "$n@$n.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
+      ${SD_POP_TRACE:+-s_group_trace} >/dev/null
   done
   sleep 3
   local r=0
@@ -44,6 +48,20 @@ run_once() {  # order
   uncut; echo "healed a <-> x"
   step heal || r=1
   step check_converged || r=1
+  if [ -n "${SD_POP_TRACE:-}" ]; then
+    mkdir -p "$ROOT/test-results/pop"; T="$ROOT/test-results/pop/Trace_$1.tla"
+    step "trace_tla($1)" > "$T.raw" 2>&1 || true
+    sed -n '/^TLA-BEGIN$/,/^TLA-END$/p' "$T.raw" | sed '1d;$d' > "$T"
+    printf 'SPECIFICATION Spec\nINVARIANT InSyncAgree\n' > "${T%.tla}.cfg"
+    out=$(cd "$ROOT/test-results/pop" && java -XX:+UseParallelGC -cp "$ROOT/archive/tla/tla2tools-1.7.4.jar" tlc2.TLC \
+            -workers 1 -deadlock -metadir "/tmp/tlc-trace-$$" -config "Trace_$1.cfg" "Trace_$1.tla" 2>&1)
+    n=$(grep -c '^  \[k |->' "$T"); st=$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 | tr -d ',' | cut -d' ' -f1)
+    if grep -q "No error has been found" <<<"$out" && [ "$st" = "$((n + 1))" ]; then
+      echo "trace validation $1: pass ($n events replayed, InSyncAgree held throughout)"
+    else
+      echo "trace validation $1: FAIL ($n events, $st states)"; grep -m3 "is violated\|rror" <<<"$out"; r=1
+    fi
+  fi
   return $r
 }
 rc=0

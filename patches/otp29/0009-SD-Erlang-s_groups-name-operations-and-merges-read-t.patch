@@ -1,7 +1,7 @@
-From a44b84967e145f3c5083d9f6cc66105ea3785091 Mon Sep 17 00:00:00 2001
+From 642238fd3e35978f8833083c14cba67d45d33a39 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 12:08:28 -0700
-Subject: [PATCH 09/12] SD Erlang s_groups: name operations and merges read the
+Subject: [PATCH 09/13] SD Erlang s_groups: name operations and merges read the
  partition inside the group lock
 
 ---

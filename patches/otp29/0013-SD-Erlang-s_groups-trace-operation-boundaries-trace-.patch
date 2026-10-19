@@ -1,0 +1,73 @@
+From 34ce5e2e133398dcc4ba5244bb488af9b882a123 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 16:18:25 -0700
+Subject: [PATCH 13/13] SD Erlang s_groups: trace operation boundaries (trace
+ validation)
+
+---
+ lib/kernel/src/s_group.erl | 21 ++++++++++++++++-----
+ 1 file changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index fd93a75..fd4e879 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -342,7 +342,7 @@ trace_event(Ev) ->
+     case persistent_term:get({s_group, trace}, false) of
+         true ->
+             ets:insert(?LOG, {erlang:unique_integer([monotonic, positive]),
+-                              erlang:system_time(millisecond), Ev}),
++                              erlang:system_time(microsecond), Ev}),
+             case ets:info(?LOG, size) > ?LOG_MAX of
+                 true -> ets:delete(?LOG, ets:first(?LOG));
+                 false -> ok
+@@ -1064,7 +1064,9 @@ merge(G, Y) ->
+     true = is_list(Y0),
+     U0 = lists:usort(P0 ++ Y0),
+     locked(G, U0,
+-           fun() ->
++           fun() -> traced_op(G, merge, fun() -> merge_locked(G, Y, U0) end) end).
++
++merge_locked(G, Y, U0) ->
+                    PI = i_sync_set(G),
+                    PY = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
+                    true = is_list(PY),
+@@ -1087,8 +1089,7 @@ merge(G, Y) ->
+                                   lists:member(X, U)]),
+                    _ = multicall(U, i_merged, [G, U, Names, Stamps, MS]),
+                    _ = [exit(L, kill) || L <- Losers],
+-                   ok
+-           end).
++                   ok.
+ 
+ %% A merge must never carry a dead pid into the union (e.g. one of an earlier
+ %% incarnation of a restarted node): it could otherwise win a name conflict
+@@ -1182,7 +1183,7 @@ locked_partition(G, Fun) ->
+     case locked(G, P0, fun() ->
+                                P1 = [node() | in_sync(G)],
+                                case P1 -- P0 of
+-                                   [] -> {done, Fun(P1)};
++                                   [] -> {done, traced_op(G, name_op, fun() -> Fun(P1) end)};
+                                    _ -> retry
+                                end
+                        end) of
+@@ -1191,6 +1192,16 @@ locked_partition(G, Fun) ->
+         Other -> Other
+     end.
+ 
++%% Trace the boundaries of an operation that holds the group lock (for
++%% trace validation against spec/tla: invariants are checked where no
++%% operation is in flight).
++traced_op(G, Kind, Fun) ->
++    Id = {node(), erlang:unique_integer([positive])},
++    ?TRACE({op_begin, G, Kind, Id}),
++    try Fun()
++    after ?TRACE({op_end, G, Kind, Id})
++    end.
++
+ %% Group-wide lock on all members (global:trans with an explicit node list).
+ locked(G, Members, Fun) ->
+     case global:trans({{?MODULE, G}, self()}, Fun, Members, infinity) of
+-- 
+2.50.1 (Apple Git-155)
+
