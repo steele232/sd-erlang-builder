@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Fault injection on a port runtime (hardening phase). Real pairwise cuts
+# with iptables (NET_ADMIN), real restarts of node containers; nodes run with
+# -rsconfig, so a restart comes back from its record (decision D-7).
+#   bin/sd-faults [RUNTIME_IMAGE] [SCENARIO...]
+#     scenarios: flap twocuts restart_merge coldstart   (default: all)
+#   SD_FAULTS_SOAK_MIN=N   repeat the scenario set for N minutes (soak)
+# Steps: test/pop/sd_faults.erl. Exit 0 iff every scenario converged.
+set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="${1:-localhost/sd-erlang:29.1.2-sd-kernel}"; shift || true
+SCEN="${*:-flap twocuts restart_merge coldstart}"
+IMG=localhost/sd-pop:$(echo "$RUNTIME" | sed 's/.*://')
+NET=sd-faults; SECRET=sd-faults-cookie; NODES=(a r x y); TICK=4
+OUT="$ROOT/test-results/faults-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$OUT"
+
+podman build --quiet --build-arg RUNTIME_IMAGE="$(podman image inspect "$RUNTIME" --format '{{.Id}}')" \
+  -f "$ROOT/containers/port/Containerfile.partition" -t "$IMG" "$ROOT" >/dev/null || exit 2
+down() { for n in "${NODES[@]}"; do podman rm -f "flt-$n" >/dev/null 2>&1 || true; done
+         podman network rm "$NET" >/dev/null 2>&1 || true; podman secret rm "$SECRET" >/dev/null 2>&1 || true; }
+up() {
+  down
+  head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' | tr 'a-f' 'A-F' | podman secret create "$SECRET" - >/dev/null
+  podman network create --internal "$NET" >/dev/null
+  for n in "${NODES[@]}"; do
+    # The record <node>.config lives in /data; restart from it if present.
+    podman run -d --name "flt-$n" --hostname "$n.pop.lab" --network "$NET" --network-alias "$n.pop.lab" \
+      --cap-add NET_ADMIN --init --secret "$SECRET,type=mount,target=/root/.erlang.cookie,mode=0400" \
+      "$IMG" sh -c "mkdir -p /data && cd /data && C=\$( [ -f $n@$n.pop.lab.config ] && echo '-config $n@$n.pop.lab' ); \
+                    exec erl -noshell -name $n@$n.pop.lab -kernel net_ticktime $TICK -pa /pop/ebin -rsconfig \$C" >/dev/null
+  done
+  sleep 3
+}
+ip_of() { podman inspect "flt-$1" --format "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}"; }
+cut() { podman exec "flt-$1" iptables -A INPUT -s "$(ip_of "$2")" -j DROP; podman exec "flt-$1" iptables -A OUTPUT -d "$(ip_of "$2")" -j DROP
+        podman exec "flt-$2" iptables -A INPUT -s "$(ip_of "$1")" -j DROP; podman exec "flt-$2" iptables -A OUTPUT -d "$(ip_of "$1")" -j DROP; }
+heal() { for n in "$@"; do podman exec "flt-$n" iptables -F; done; }
+step() {  # Erlang expression on a hidden driver in flt-r
+  podman exec flt-r erl -noshell -hidden -name "drv$RANDOM@r.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
+    -eval "R = (catch $1), io:format(\"step: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
+}
+
+flap() {
+  up; step "sd_faults:setup()" || return 1
+  for i in 1 2 3 4 5; do
+    cut a x; step "sd_faults:wait_cut([{a, x}])" || return 1
+    step "sd_faults:reg(a, g1, fa$i)"; step "sd_faults:reg(x, g1, fx$i)"
+    heal a x; step "sd_faults:redial([{a, x}])"
+  done
+  step "sd_faults:check_all()"
+}
+twocuts() {
+  up; step "sd_faults:setup()" || return 1
+  cut a x; cut x y; step "sd_faults:wait_cut([{a, x}, {x, y}])" || return 1
+  step "sd_faults:reg(a, g1, n1)"; step "sd_faults:reg(x, g1, n1)"
+  step "sd_faults:reg(x, g2, m1)"; step "sd_faults:reg(y, g2, m1)"
+  heal a x y; step "sd_faults:redial([{a, x}, {x, y}])"
+  step "sd_faults:check_all()"
+}
+restart_merge() {
+  up; step "sd_faults:setup()" || return 1
+  cut a x; step "sd_faults:wait_cut([{a, x}])" || return 1
+  step "sd_faults:reg(a, g1, n1)"; step "sd_faults:reg(x, g1, n1)"; step "sd_faults:reg(x, g2, m1)"
+  heal a x; step "sd_faults:redial([{a, x}])"
+  podman restart -t 0 flt-x >/dev/null          # x dies while the merge runs
+  step "sd_faults:wait_up(x)" || return 1
+  step "sd_faults:redial([{a, x}, {x, y}])"
+  step "sd_faults:check_all()"
+}
+coldstart() {
+  up; step "sd_faults:setup()" || return 1
+  step "sd_faults:reg(a, g1, n1)"; step "sd_faults:reg(y, g2, m1)"
+  for n in "${NODES[@]}"; do podman stop -t 0 "flt-$n" >/dev/null; done   # the whole cluster goes down
+  for n in "${NODES[@]}"; do podman start "flt-$n" >/dev/null; done
+  for n in "${NODES[@]}"; do step "sd_faults:wait_up($n)" || return 1; done
+  step "sd_faults:redial([{a, r}, {a, x}, {r, x}, {x, y}])"
+  # Groups come back from the records; names of processes that died with the
+  # cluster are gone; registration works again.
+  step "sd_faults:check_all()" || return 1
+  step "sd_faults:reg(r, g1, n2)"; step "sd_faults:check_all()"
+}
+
+rc=0; END=$(( $(date +%s) + ${SD_FAULTS_SOAK_MIN:-0} * 60 )); round=0
+while :; do
+  round=$((round + 1))
+  for s in $SCEN; do
+    if $s > "$OUT/$s-$round.log" 2>&1; then r=pass; else r=FAIL; rc=1; fi
+    echo "round $round $s: $r"
+  done
+  [ "$(date +%s)" -lt "$END" ] || break
+done
+down
+echo "FAULTS RESULT: $([ $rc = 0 ] && echo pass || echo FAIL) ($OUT)"
+exit $rc

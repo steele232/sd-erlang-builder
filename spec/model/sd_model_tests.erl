@@ -228,3 +228,29 @@ apply_op(S, {whereis_name, G, N, Ni}) -> sd_model:whereis_name(S, G, N, Ni);
 apply_op(S, {whereis_name3, Ni1, G, N, Ni}) -> sd_model:whereis_name(S, Ni1, G, N, Ni);
 apply_op(S, {send, G, N, Ni}) -> sd_model:send(S, G, N, Ni);
 apply_op(S, {send_pid, {pid, PN, _} = P, Ni}) -> sd_model:send_pid(S, P, PN, Ni).
+
+%%--------------------------------------------------------------------
+%% Failures (M1, decisions D-7..D-10)
+%%--------------------------------------------------------------------
+
+%% A member restarts: memberships unchanged (configuration, not liveness),
+%% names of its processes gone, connections to its group-mates re-formed.
+node_down_up_member_test() ->
+    {S1, true} = sd_model:register_name(with_g1(), g1, x, ?P(?B, 1), ?A),
+    {S2, true} = sd_model:register_name(S1, g1, y, ?P(?C, 1), ?A),
+    {S3, ok} = sd_model:node_down_up(S2, ?B),
+    {g1, Members, Names} = sd_model:group(g1, S3),
+    ?assertEqual([?A, ?B, ?C], lists:sort(Members)),
+    ?assertEqual([{y, ?P(?C, 1)}], lists:sort(Names)),
+    {?B, normal, Cs, Gs} = sd_model:node_record(?B, S3),
+    ?assertEqual([?A, ?C], lists:sort(Cs)),
+    ?assertEqual([g1], Gs).
+
+%% A free node restarts: unconnected, alone in its own free group, and the
+%% free names of its processes are gone from its former free group.
+node_down_up_free_test() ->
+    S0 = init(),
+    {?D, normal, [], no_group} = sd_model:node_record(?D, S0),
+    {S3, ok} = sd_model:node_down_up(S0, ?D),
+    {?D, normal, Cs, no_group} = sd_model:node_record(?D, S3),
+    ?assertEqual([], Cs).

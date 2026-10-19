@@ -37,4 +37,5 @@ model_step(M, register_name, [G, N, P, Ni]) -> sd_model:register_name(M, G, N, P
 model_step(M, re_register_name, [G, N, P, Ni]) -> sd_model:re_register_name(M, G, N, P, Ni);
 model_step(M, unregister_name, [G, N, Ni]) -> sd_model:unregister_name(M, G, N, Ni);
 model_step(M, whereis_name, [G, N, Ni]) -> sd_model:whereis_name(M, G, N, Ni);
-model_step(M, send, [G, N, Ni]) -> sd_model:send(M, G, N, Ni).
+model_step(M, send, [G, N, Ni]) -> sd_model:send(M, G, N, Ni);
+model_step(M, node_down_up, [Ni]) -> sd_model:node_down_up(M, Ni).

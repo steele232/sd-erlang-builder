@@ -19,6 +19,7 @@
 %% Must compile on OTP 20 (historical runtime) and current OTP (host checks).
 -module(sd_model).
 
+-export([node_down_up/2]).
 -export([initial_state/1,
          %% the fifteen SD Erlang functions (D3.3 4.2.1)
          register_name/5, re_register_name/5, unregister_name/4,
@@ -445,3 +446,41 @@ lookup(Name, Ns) ->
         {Name, P} -> P;
         false -> undefined
     end.
+
+%%====================================================================
+%% Failures (proposal M1, decisions D-7..D-10, 2026-10-19)
+%%====================================================================
+
+%% node_down_up(ni): ni crashes and restarts from its record.
+%%   - Membership is configuration, not liveness (D3.3 2.1, 2.3): unchanged.
+%%   - Every name whose pid lives on ni is removed, from every namespace
+%%     (stock global's rule).
+%%   - ni loses all connections; on restart it reconnects to the members of
+%%     its groups (its record names them, D-7); a free ni stays unconnected
+%%     and is its own free group.
+-spec node_down_up(state(), node_id()) -> {state(), ok}.
+node_down_up(S = #st{grs = Grs, fgs = Fgs, fhs = Fhs, nds = Nds}, Ni) ->
+    Keep = fun(Ns) -> [{Nm, P} || {Nm, {pid, PN, _} = P} <- Ns, PN =/= Ni] end,
+    Grs1 = [{G, Nis, Keep(Ns)} || {G, Nis, Ns} <- Grs],
+    Fgs0 = [{Nis, Keep(Ns)} || {Nis, Ns} <- Fgs],
+    Fhs0 = [{N, case N of Ni -> []; _ -> Keep(Ns) end} || {N, Ns} <- Fhs],
+    Nds0 = lists:sort([case N of
+                           Ni -> {N, T, [], Gs};
+                           _ -> {N, T, Cs -- [Ni], Gs}
+                       end || {N, T, Cs, Gs} <- Nds]),
+    {Ni, _, _, MyGs} = lists:keyfind(Ni, 1, Nds0),
+    S1 = case MyGs of
+             no_group ->
+                 Fgs1 = case free_group_of(Ni, Fgs0) of
+                            none -> Fgs0;
+                            {Nis, Names} = FG ->
+                                Rest = [{Nis -- [Ni], Names} || Nis =/= [Ni]],
+                                lists:sort([{[Ni], []} | Rest ++ (Fgs0 -- [FG])])
+                        end,
+                 S#st{grs = Grs1, fgs = Fgs1, fhs = Fhs0, nds = Nds0};
+             Gs ->
+                 Mates = lists:usort(lists:append([Nis || {G, Nis, _} <- Grs1, lists:member(G, Gs)])),
+                 S#st{grs = Grs1, fgs = Fgs0, fhs = Fhs0, nds = inter_connect_nodes(Mates, Nds0)}
+         end,
+    {S1, ok}.
+

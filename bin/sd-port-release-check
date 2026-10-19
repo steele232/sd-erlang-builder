@@ -79,7 +79,8 @@ echo "   SD image $SD boots with s_group"
 
 # 5. stock L5 reference (twice: self-agreement)
 P=test-results/pbt
-for k in a b; do
+for k in a b; do   # a property of stock OTP at that commit: recorded once, then reused
+  [ -s "$ROOT/$P/free-stock-$S12-$k.eterm" ] && continue
   "$ROOT/bin/sd-pbt" eval "sd_free_equiv:record(\"/pbt/out/free-corpus-v1.eterm\", \"/pbt/out/free-stock-$S12-$k.eterm\")" "$STOCK" > "$OUT/l5-ref-$k.log" 2>&1
 done
 (cd "$ROOT/test/pbt" && erlc -I . sd_free_equiv.erl sd_compat.erl)

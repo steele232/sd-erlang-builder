@@ -5,7 +5,7 @@
 %% Structure follows the published description:
 %%   * the abstract model is the executable semantics (spec/model/sd_model.erl)
 %%   * 14 SUT nodes, 12 normal + 2 hidden (D3.3 5.2)
-%%   * command weights of D3.3 Fig. 5.4 (node_down_up omitted: M ignores failures)
+%%   * command weights of D3.3 Fig. 5.4 (node_down_up opt-in: SD_PBT_FAILURES=1, M1)
 %%   * postcondition: returned value AND normalised actual state must match
 %%     the model (D3.3 5.2, AST'14 Fig. 7), checked as eventual equality
 %%     because the implementation converges asynchronously (R3)
@@ -19,6 +19,7 @@
 
 -export([initial_state/0, command/1, precondition/2, next_state/3, postcondition/3]).
 -export([prop_s_group/0, prop_s_group/1]).
+-export([node_down_up/1]).
 -export([new_s_group/3, add_nodes/3, remove_nodes/3, delete_s_group/2,
          register_name/4, re_register_name/4, unregister_name/3,
          whereis_name/3, send/3]).
@@ -54,7 +55,9 @@ command(#{model := M}) ->
        {10, {call, ?MODULE, whereis_name, [existing_group(Existing), oneof(?NAME_POOL), caller(M, Existing, Nodes)]}},
        {10, {call, ?MODULE, re_register_name, [existing_group(Existing), oneof(?NAME_POOL), pid_ref(Nodes), caller(M, Existing, Nodes)]}},
        {10, {call, ?MODULE, unregister_name, [existing_group(Existing), oneof(?NAME_POOL), caller(M, Existing, Nodes)]}},
-       {10, {call, ?MODULE, send, [existing_group(Existing), oneof(?NAME_POOL), caller(M, Existing, Nodes)]}}]).
+       {10, {call, ?MODULE, send, [existing_group(Existing), oneof(?NAME_POOL), caller(M, Existing, Nodes)]}}]
+      %% M1 (D3.3 Fig. 5.4 node_down_up, weight 1), opt-in: SD_PBT_FAILURES=1.
+      ++ [{1, {call, ?MODULE, node_down_up, [oneof(Nodes)]}} || os:getenv("SD_PBT_FAILURES") =:= "1"]).
 
 oneof_or([], Default) -> oneof(Default);
 oneof_or(L, _) -> oneof(L).
@@ -120,6 +123,8 @@ postcondition(#{model := M}, {call, ?MODULE, F, Args} = Call, Res) ->
     end.
 
 %% I-value -> M-value, using only registered divergences.
+value_ok(node_down_up, _Args, _M, ok, ok) ->
+    true;
 value_ok(add_nodes, [G, Nis, Ni], _M, error, {ok, G, []}) ->
     lists:usort(Nis) -- [Ni] =:= [];                          %% I1
 value_ok(add_nodes, [G, Nis, Ni], _M, {G, []}, {ok, G, Nodes}) ->
@@ -179,6 +184,11 @@ re_register_name(G, N, P, Ni) -> call(Ni, re_register_name, [G, N, P]).
 unregister_name(G, N, Ni) -> call(Ni, unregister_name, [G, N]).
 whereis_name(G, N, Ni) -> call(Ni, whereis_name, [G, N]).
 send(G, N, Ni) -> call(Ni, send, [G, N, sd_pbt_msg]).
+
+node_down_up(Ni) ->
+    Maps = sd_pbt_cluster:restart(Ni),
+    ets:insert(?TAB, {pid_maps, Maps}),
+    ok.
 
 call(Ni, F, Args) ->
     Maps = pid_maps(),

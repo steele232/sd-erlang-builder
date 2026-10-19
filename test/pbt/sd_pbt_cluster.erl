@@ -5,6 +5,7 @@
 
 -include("sd_compat.hrl").
 
+-export([restart/1]).
 -export([sut_nodes/0, node_types/0, start/0, reset/0, stop/0,
          pid_maps/0, to_real/2, to_ref/2]).
 
@@ -24,6 +25,9 @@ node_name(Prefix, I) ->
     list_to_atom(Prefix ++ integer_to_list(I) ++ "@" ++ ?HOST).
 
 start() ->
+    %% With failure commands (SD_PBT_FAILURES=1) nodes keep an -rsconfig record
+    %% in the driver's working directory; a fresh cluster starts without one.
+    _ = [file:delete(atom_to_list(N) ++ ".config") || N <- sut_nodes()],
     [launch(N, T) || {N, T} <- node_types()],
     wait_until(fun() -> [N || N <- sut_nodes(), net_adm:ping(N) =/= pong] =:= [] end,
                ?START_TIMEOUT_MS, all_nodes_up),
@@ -58,11 +62,37 @@ launch(Node, Type) ->
     Log = "/pbt/out/log-" ++ Name ++ "-" ++ Stamp ++ ".log",
     %% SD_PBT_NODE_ARGS: extra erl args a runtime image needs on every SUT node
     %% (e.g. a library-only port: "-kernel connect_all false -pa ... -s ...").
-    Extra = os:getenv("SD_PBT_NODE_ARGS", ""),
+    Extra = os:getenv("SD_PBT_NODE_ARGS", "") ++ failure_args(Node),
     Cmd = "ERL_CRASH_DUMP=" ++ Dump ++ " erl -detached -noshell -name " ++ Name ++ "@" ++ ?HOST ++ Hidden ++
           " -pa /pbt/ebin -kernel error_logger '{file,\"" ++ Log ++ "\"}' " ++ Extra,
     _ = os:cmd(Cmd),
     ok.
+
+failure_args(Node) ->
+    case os:getenv("SD_PBT_FAILURES") of
+        "1" ->
+            Rec = atom_to_list(Node) ++ ".config",
+            " -rsconfig" ++ case filelib:is_file(Rec) of
+                                true -> " -config " ++ atom_to_list(Node);
+                                false -> ""
+                            end;
+        _ -> ""
+    end.
+
+%% Crash Node (halt) and start it again from its -rsconfig record; refill its
+%% process pool. Returns the new pid maps.
+restart(Node) ->
+    {Node, Type} = lists:keyfind(Node, 1, node_types()),
+    rpc:cast(Node, erlang, halt, []),
+    wait_until(fun() -> net_adm:ping(Node) =:= pang end, ?START_TIMEOUT_MS, node_down),
+    wait_until(fun() ->
+                       {ok, Names} = net_adm:names(),
+                       not lists:keymember(hd(string:tokens(atom_to_list(Node), "@")), 1, Names)
+               end, ?START_TIMEOUT_MS, epmd_clear),
+    launch(Node, Type),
+    wait_until(fun() -> net_adm:ping(Node) =:= pong end, ?START_TIMEOUT_MS, node_up),
+    _ = rpc:call(Node, sd_pbt_agent, start_pool, [?POOL]),
+    pid_maps().
 
 %% {RefToPid, PidToRef} for every pool process on every node.
 pid_maps() ->
