@@ -1,0 +1,424 @@
+From 0889781a732823a56d7dedd316a12f4970cad247 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 16:10:00 -0700
+Subject: [PATCH 12/12] SD Erlang s_groups: OR-set membership with group
+ incarnations (D-8), rejoin as claim (D-7), anti-entropy (D-9)
+
+---
+ lib/kernel/src/s_group.erl | 236 ++++++++++++++++++++++++++++++++-----
+ 1 file changed, 209 insertions(+), 27 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 130da51..fd93a75 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -53,7 +53,7 @@
+ %% internal (called on other members)
+ -export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
+          i_names/1, i_is_free/0, i_sync_set/1, i_connect_all/1, i_seqs/0,
+-         i_merged/4, i_alive/1, i_log/0]).
++         i_merged/5, i_alive/1, i_log/0, i_ms/1, i_hash/1]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+          code_change/3]).
+ 
+@@ -66,6 +66,9 @@
+ %% unreachable for ?NODE_GC_MS, all of them are. A deliberate re-dial
+ %% reconnects within milliseconds and drops nothing.
+ -define(NODE_GC_STEP_MS, 500).
++%% Anti-entropy period (decision D-9); kernel parameter
++%% s_group_anti_entropy_ms, 0 disables.
++-define(AE_MS, 5000).
+ -define(NODE_GC_MS, 4000).
+ %% Off-by-default event trace (boot flag -s_group_trace): name inserts and
+ %% deletions with their reason, partition changes and merges, in a bounded
+@@ -88,9 +91,13 @@
+ %%   merging :: #{G => true}    a merge for G is running on this node.
+ %%   redial :: #{node() => true} links being re-dialled on purpose (D-1):
+ %%                              their nodedown is not a failure.
++%%   ms :: #{G => {Inc, Adds, Rems}}  membership as an observed-remove set
++%%                              (decision D-8): Adds :: #{node() => [Tag]},
++%%                              Rems :: [Tag]; groups is derived from it;
++%%   tomb :: #{{G, Inc} => true} deleted incarnations (stale claims lose).
+ -record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{},
+              sync = #{}, seq = #{}, heals = #{}, seen = #{}, merging = #{},
+-             redial = #{}}).
++             redial = #{}, ms = #{}, tomb = #{}}).
+ 
+ start_link() ->
+     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+@@ -107,10 +114,11 @@ new_s_group(G, Nodes0) ->
+         {true, false} ->
+             %% Install here first, so this node leaves the free namespace
+             %% before it links to anyone (test/corpus/l1-c4-joinrace.eterm).
+-            ok = i_install(G, Nodes, #{}),
++            MS = {mk_tag(), maps:from_list([{N, [mk_tag()]} || N <- Nodes]), []},
++            ok = i_install(G, MS, #{}),
+             Others = Nodes -- [node()],
+             _ = [net_kernel:connect_node(N) || N <- Others],
+-            _ = multicall(Others, i_install, [G, Nodes, #{}]),
++            _ = multicall(Others, i_install, [G, MS, #{}]),
+             _ = multicall(Nodes, i_mesh, [G]),
+             {ok, G, Nodes}
+     end.
+@@ -130,7 +138,10 @@ add_nodes(G, Nodes0) ->
+                             locked(G, All,
+                                    fun() ->
+                                            Ns = i_names(G),
+-                                           _ = multicall(All, i_install, [G, All, Ns]),
++                                           {Inc, Adds, Rems} = i_ms(G),
++                                           MS = {Inc, lists:foldl(fun(N, A) -> maps:put(N, [mk_tag()], A) end,
++                                                                  Adds, New), Rems},
++                                           _ = multicall(All, i_install, [G, MS, Ns]),
+                                            _ = multicall(All, i_mesh, [G]),
+                                            {ok, G, New}
+                                    end)
+@@ -152,7 +163,10 @@ remove_nodes(G, Nodes0) ->
+                     locked(G, Members,
+                            fun() ->
+                                    Ns = i_names(G),
+-                                   _ = multicall(Rest, i_install, [G, Rest, Ns]),
++                                   {Inc, Adds, Rems} = i_ms(G),
++                                   %% Observed remove: tombstone every tag of Rm seen here.
++                                   MS = {Inc, Adds, lists:usort(Rems ++ lists:append([maps:get(N, Adds, []) || N <- Rm]))},
++                                   _ = multicall(Rest, i_install, [G, MS, Ns]),
+                                    _ = multicall(Rm, i_drop, [G]),
+                                    ok
+                            end)
+@@ -163,7 +177,7 @@ delete_s_group(G) ->
+     case maps:find(G, groups()) of
+         error -> {error, {"remote_s_group", G}};
+         {ok, Members} ->
+-            _ = multicall(Members, i_drop, [G]),
++            _ = multicall(Members, i_drop, [G]),     % each records a tombstone
+             ok
+     end.
+ 
+@@ -310,7 +324,9 @@ get_own_nodes_with_errors() -> {ok, all}.
+ %% Internal operations executed on each member
+ %%--------------------------------------------------------------------
+ 
+-i_install(G, Members, Names) -> gen_server:call(?MODULE, {install, G, Members, Names}, ?T).
++i_install(G, MS, Names) -> gen_server:call(?MODULE, {install, G, MS, Names}, ?T).
++i_ms(G) -> gen_server:call(?MODULE, {ms, G}, ?T).
++i_hash(G) -> gen_server:call(?MODULE, {hash, G}, ?T).
+ i_mesh(G) -> gen_server:call(?MODULE, {mesh, G}, ?T).
+ i_drop(G) -> gen_server:call(?MODULE, {drop, G}, ?T).
+ i_insert(G, Name, Pid, Mode) -> gen_server:call(?MODULE, {insert, G, Name, Pid, Mode}, ?T).
+@@ -335,7 +351,7 @@ trace_event(Ev) ->
+     end.
+ i_sync_set(G) -> [node() | in_sync(G)].
+ i_seqs() -> gen_server:call(?MODULE, seqs, ?T).
+-i_merged(G, Union, Names, Stamps) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps}, ?T).
++i_merged(G, Union, Names, Stamps, MS) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps, MS}, ?T).
+ %% Connect to every node of a prospective merged partition; returns the
+ %% nodes still not connected.
+ i_connect_all(Nodes) ->
+@@ -361,7 +377,9 @@ init([]) ->
+             case static_groups(Conf) of
+                 {error, _} = Error ->
+                     {stop, Error};                                        % D-3 / DN1
+-                {ok, Groups} ->
++                {ok, Groups0} ->
++                    {MS0, Tomb0} = initial_claims(Groups0),
++                    Groups = ms_groups(MS0),
+                     _ = ets:new(?VIEW, [named_table, protected, set, {read_concurrency, true}]),
+                     case init:get_argument(s_group_trace) of
+                         {ok, _} ->
+@@ -380,7 +398,11 @@ init([]) ->
+                     %% Not timer:send_interval/2: timer_server is started after
+                     %% the kernel supervisor's children, so it would deadlock boot.
+                     _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
+-                    {ok, #st{groups = Groups,
++                    _ = case ae_ms() of
++                            0 -> ok;
++                            AE -> erlang:send_after(AE, self(), ae_timer)
++                        end,
++                    {ok, #st{groups = Groups, ms = MS0, tomb = Tomb0,
+                              names = maps:map(fun(_, _) -> #{} end, Groups)}}
+             end
+     end.
+@@ -388,7 +410,13 @@ init([]) ->
+ handle_call(names, _F, S) -> {reply, S#st.names, S};
+ handle_call({redial, Nodes}, _F, S) -> {reply, ok, mark_redial(Nodes, S)};
+ handle_call(seqs, _F, S) -> {reply, S#st.seq, S};
+-handle_call({merged, G, Union, Names, Stamps}, _F, S) ->
++handle_call({ms, G}, _F, S) -> {reply, maps:get(G, S#st.ms, undefined), S};
++handle_call({hash, G}, _F, S) ->
++    {reply, erlang:phash2({maps:get(G, S#st.names, #{}), ms_norm(maps:get(G, S#st.ms, undefined))}), S};
++handle_call({merged, G, Union, Names, Stamps, MS}, _F, S0) ->
++    %% D-7/D-8: the merged membership is the join of both sides' OR-sets; a
++    %% node no longer a member after the join (its claim was stale) leaves.
++    S = join_ms(G, MS, S0),
+     case lists:member(node(), Union) andalso maps:is_key(G, S#st.groups) of
+         true ->
+             Old = maps:get(G, S#st.names, #{}),
+@@ -402,20 +430,31 @@ handle_call({merged, G, Union, Names, Stamps}, _F, S) ->
+                            S1, Names),
+             Heals = maps:fold(fun(K, V, Acc) -> maps:update_with(K, fun(O) -> max(O, V) end, V, Acc) end,
+                               S2#st.heals, Stamps),
+-            {reply, ok, set_sync(G, Union -- [node()], S2#st{heals = Heals})};
++            Members = maps:get(G, S2#st.groups),
++            {reply, ok, set_sync(G, [N || N <- Union, lists:member(N, Members)] -- [node()],
++                                 S2#st{heals = Heals})};
+         false ->
+             {reply, ok, S}
+     end;
+ handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
+ handle_call({add_attributes, As}, _F, S) ->
+     {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
+-handle_call({install, G, Members, Names}, _F, S) ->
++handle_call({install, G, MS0, Names}, _F, S) ->
++    %% An install comes from a member under the group lock: it is
++    %% authoritative for its incarnation (a different local incarnation of
++    %% the same name is replaced; S7: same-name groups never merge).
++    MS = case maps:get(G, S#st.ms, undefined) of
++             {Inc, _, _} = Old when Inc =:= element(1, MS0) -> ms_join(Old, MS0);
++             _ -> MS0
++         end,
++    Members = ms_members(MS),
+     %% D3.3 InterConnectNodes: every member connects to every other member.
+     Others = Members -- [node()],
+     _ = spawn(fun() -> [net_kernel:connect_node(N) || N <- Others] end),
+     S1 = lists:foldl(fun({Nm, P}, Acc) -> put_name(G, Nm, P, Acc) end,
+                      set_groups(maps:put(G, Members, S#st.groups),
+-                                S#st{names = maps:put(G, maps:get(G, S#st.names, #{}),
++                                S#st{ms = maps:put(G, MS, S#st.ms),
++                                     names = maps:put(G, maps:get(G, S#st.names, #{}),
+                                                       S#st.names)}),
+                      maps:to_list(Names)),
+     %% The table was installed under the group lock to every member; those
+@@ -437,9 +476,7 @@ handle_call({mesh, G}, _F, S) ->
+               end),
+     {reply, ok, mark_redial(Redial, S)};
+ handle_call({drop, G}, _F, S) ->
+-    S1 = set_groups(maps:remove(G, S#st.groups), S#st{names = maps:remove(G, S#st.names)}),
+-    ets:delete(?VIEW, {sync, G}),
+-    {reply, ok, S1#st{sync = maps:remove(G, S1#st.sync)}};
++    {reply, ok, drop_group(G, S)};
+ handle_call({insert, G, Name, Pid, Mode}, _F, S) ->
+     S1 = case Mode of replace -> del_name(G, Name, S); none -> S end,
+     {reply, ok, put_name(G, Name, Pid, S1)};
+@@ -471,10 +508,51 @@ handle_cast({pop_lost, A, X, G, Seq} = Rep, S) ->
+ handle_cast({pop_remove, R, G}, S) ->
+     {noreply, leave_partition(G, R, S)};
+ handle_cast({merge_request, G, From}, S) ->
+-    %% From does not consider this node in step in G: whatever this node
+-    %% thinks, they are not; drop From here too and merge.
+-    self() ! merge_tick,
+-    {noreply, leave_partition(G, From, S)};
++    handle_cast({merge_request, G, From, undefined}, S);
++handle_cast({merge_request, G, From, FromInc}, S) ->
++    case {maps:get(G, S#st.ms, undefined), FromInc} of
++        {undefined, _} ->
++            %% D-7: a claim for a group this node knows was deleted loses.
++            _ = case maps:is_key({G, FromInc}, S#st.tomb) of
++                    true -> gen_server:cast({?MODULE, From}, {group_gone, G, FromInc});
++                    false -> ok
++                end,
++            {noreply, S};
++        {{Inc, _, _}, FI} when FI =/= undefined, FI =/= Inc ->
++            {noreply, S};                          % a different group of that name (S7)
++        {MS, _} ->
++            case lists:member(From, ms_members(MS)) of
++                false ->
++                    %% D-7: From's claim lists this node but this node's view does
++                    %% not list From: send the view; From joins it (and leaves if
++                    %% it was removed while away).
++                    gen_server:cast({?MODULE, From}, {ms_update, G, MS}),
++                    {noreply, S};
++                true ->
++                    %% From does not consider this node in step in G: whatever
++                    %% this node thinks, they are not; drop From here too and merge.
++                    self() ! merge_tick,
++                    {noreply, leave_partition(G, From, S)}
++            end
++    end;
++handle_cast({ms_update, G, MS}, S) ->
++    {noreply, join_ms(G, MS, S)};
++handle_cast({group_gone, G, Inc}, S) ->
++    case maps:get(G, S#st.ms, undefined) of
++        {Inc, _, _} -> {noreply, drop_group(G, S)};
++        _ -> {noreply, S}
++    end;
++handle_cast({ae_repair, G, Peer}, S) ->
++    case maps:is_key(G, S#st.merging) orelse not maps:is_key(G, S#st.groups) of
++        true -> {noreply, S};
++        false ->
++            Self = self(),
++            _ = spawn(fun() ->
++                              try merge(G, Peer) catch _:_ -> ok end,
++                              gen_server:cast(Self, {merge_done, G})
++                      end),
++            {noreply, S#st{merging = maps:put(G, true, S#st.merging)}}
++    end;
+ handle_cast({merge_done, G}, S) ->
+     {noreply, S#st{merging = maps:remove(G, S#st.merging)}};
+ handle_cast({pids_dead, Dead}, S) ->
+@@ -576,6 +654,28 @@ handle_info({gc_node, N, Seq, Left}, S) ->
+     end;
+ handle_info(merge_tick, S) ->
+     {noreply, merge_tick(S)};
++%% D-9: compare this node's table and membership of each group with one
++%% random in-step peer; a difference is repaired by a merge, and logged
++%% (a repair means some other mechanism failed).
++handle_info(ae_timer, S) ->
++    _ = erlang:send_after(ae_ms(), self(), ae_timer),
++    Self = self(),
++    _ = [spawn(fun() ->
++                       Mine = erlang:phash2({maps:get(G, S#st.names, #{}),
++                                             ms_norm(maps:get(G, S#st.ms, undefined))}),
++                       try erpc:call(Peer, ?MODULE, i_hash, [G], ?T) of
++                           Mine -> ok;
++                           Other when is_integer(Other) ->
++                               logger:notice("s_group anti-entropy: group ~p differs from ~p; repairing",
++                                             [G, Peer]),
++                               gen_server:cast(Self, {ae_repair, G, Peer});
++                           _ -> ok
++                       catch _:_ -> ok
++                       end
++               end)
++         || {G, Peers} <- maps:to_list(S#st.sync), Peers =/= [],
++            Peer <- [lists:nth(rand:uniform(length(Peers)), Peers)]],
++    {noreply, S};
+ handle_info(merge_timer, S) ->
+     _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
+     {noreply, merge_tick(S)};
+@@ -610,7 +710,7 @@ code_change(_, S, _) -> {ok, S}.
+ %% into global's (free) namespace.
+ set_groups(New, #st{groups = Old} = S) ->
+     ets:insert(?VIEW, {groups, New}),
+-    ok = persist(New),
++    ok = persist(New, S#st.ms, S#st.tomb),
+     S1 = S#st{groups = New},
+     case {map_size(Old) =:= 0, map_size(New) =:= 0} of
+         {true, false} ->                                     % joined: no longer free
+@@ -652,18 +752,96 @@ set_groups(New, #st{groups = Old} = S) ->
+ %% format, so that `-config <node>` restores it after a restart. Written
+ %% before the change is acknowledged, and atomically (temporary file + rename);
+ %% 19.3 skipped changes made within the same second as the last write (RS1).
+-persist(Groups) ->
++%% The record also holds the OR-set state and the tombstones (decision D-8,
++%% a may_differ from 19.3's format): on restart it is a claim, resolved by
++%% the merge against the current members (D-7).
++persist(Groups, MS, Tomb) ->
+     case init:get_argument(rsconfig) of
+         {ok, _} ->
+             File = atom_to_list(node()) ++ ".config",
+             Tmp = File ++ ".tmp",
+-            Conf = [{kernel, [{s_groups, [{G, normal, Ns} || {G, Ns} <- lists:sort(maps:to_list(Groups))]}]}],
++            Conf = [{kernel, [{s_groups, [{G, normal, Ns} || {G, Ns} <- lists:sort(maps:to_list(Groups))]},
++                              {s_group_state, maps:with(maps:keys(Groups), MS)},
++                              {s_group_tombstones, maps:keys(Tomb)}]}],
+             ok = file:write_file(Tmp, io_lib:format("~p.~n", [Conf])),
+             ok = file:rename(Tmp, File);
+         error ->
+             ok
+     end.
+ 
++%% ---- membership as an observed-remove set (D-8)
++
++%% Tags and incarnations are plain terms (the -rsconfig record is text read
++%% back by -config, so no refs): unique across nodes and restarts.
++mk_tag() -> {node(), erlang:system_time(), erlang:unique_integer([positive])}.
++
++ms_members({_Inc, Adds, Rems}) ->
++    lists:sort([N || {N, Tags} <- maps:to_list(Adds), Tags -- Rems =/= []]).
++
++ms_join({Inc, A1, R1}, {Inc, A2, R2}) ->
++    {Inc, maps:merge_with(fun(_, T1, T2) -> lists:usort(T1 ++ T2) end, A1, A2),
++     lists:usort(R1 ++ R2)}.
++
++ms_norm(undefined) -> undefined;
++ms_norm({Inc, A, R}) -> {Inc, lists:sort([{N, lists:sort(T)} || {N, T} <- maps:to_list(A)]), lists:sort(R)}.
++
++ms_groups(MS) ->
++    maps:filter(fun(_, Ns) -> lists:member(node(), Ns) end,
++                maps:map(fun(_, M) -> ms_members(M) end, MS)).
++
++%% Join a received view of G into this node's (same incarnation only, S7)
++%% and re-derive membership; leave G if this node is no longer a member.
++join_ms(G, MS2, S) ->
++    case {maps:get(G, S#st.ms, undefined), MS2} of
++        {{Inc, _, _} = MS1, {Inc, _, _}} ->
++            MS = ms_join(MS1, MS2),
++            Members = ms_members(MS),
++            S1 = S#st{ms = maps:put(G, MS, S#st.ms)},
++            case lists:member(node(), Members) of
++                true -> set_groups(maps:put(G, Members, S1#st.groups), S1);
++                false -> drop_group(G, S1)
++            end;
++        _ ->
++            S
++    end.
++
++drop_group(G, S) ->
++    Tomb = case maps:get(G, S#st.ms, undefined) of
++               {Inc, _, _} -> maps:put({G, Inc}, true, S#st.tomb);
++               undefined -> S#st.tomb
++           end,
++    S0 = S#st{ms = maps:remove(G, S#st.ms), tomb = Tomb},
++    S1 = set_groups(maps:remove(G, S0#st.groups), S0#st{names = maps:remove(G, S0#st.names)}),
++    ets:delete(?VIEW, {sync, G}),
++    S1#st{sync = maps:remove(G, S1#st.sync)}.
++
++%% Claims at boot (D-7): from -rsconfig's recorded state if present, else
++%% from the launch configuration with deterministic tags, so that every node
++%% booting from one config agrees and a removal of {static, G, N} also
++%% defeats N's later static claim.
++initial_claims(Groups) ->
++    Recorded = case application:get_env(kernel, s_group_state) of
++                   {ok, Rec} when is_map(Rec) -> Rec;
++                   _ -> #{}
++               end,
++    Tomb = case application:get_env(kernel, s_group_tombstones) of
++               {ok, L} when is_list(L) -> maps:from_list([{K, true} || K <- L]);
++               _ -> #{}
++           end,
++    MS = maps:map(fun(G, Ns) ->
++                          case maps:find(G, Recorded) of
++                              {ok, M} -> M;
++                              error -> {{static, G}, maps:from_list([{N, [{static, G, N}]} || N <- Ns]), []}
++                          end
++                  end, Groups),
++    {MS, Tomb}.
++
++ae_ms() ->
++    case application:get_env(kernel, s_group_anti_entropy_ms) of
++        {ok, N} when is_integer(N), N >= 0 -> N;
++        _ -> ?AE_MS
++    end.
++
+ drop_free_peer(Node, S) ->
+     case ets:lookup(?VIEW, {free_peer, Node}) of
+         [{_, CId}] ->
+@@ -859,7 +1037,8 @@ merge_tick1(S) ->
+                                          not lists:member(M, maps:get(G, Acc#st.sync, []))]),
+               %% Views can be asymmetric (an install ran before a link was
+               %% up): ask a smaller missing node to merge, see merge_request.
+-              _ = [gen_server:cast({?MODULE, M}, {merge_request, G, node()})
++              Inc = element(1, maps:get(G, Acc#st.ms)),
++              _ = [gen_server:cast({?MODULE, M}, {merge_request, G, node(), Inc})
+                    || M <- Missing, M < node()],
+               case {[M || M <- Missing, node() < M], maps:is_key(G, Acc#st.merging)} of
+                   {[Y | _], false} ->
+@@ -897,13 +1076,16 @@ merge(G, Y) ->
+                    NI = i_names(G),
+                    NY = rpc:call(Y, ?MODULE, i_names, [G], ?T),
+                    true = is_map(NY),
++                   {Inc, _, _} = MSI = i_ms(G),
++                   {Inc, _, _} = MSY = rpc:call(Y, ?MODULE, i_ms, [G], ?T),   % same group (S7)
++                   MS = ms_join(MSI, MSY),
+                    {Names, Losers} = resolve(alive_only(NI, U), alive_only(NY, U)),
+                    Stamps = maps:from_list(
+                               [{{A, X}, Seq}
+                                || A <- U,
+                                   {X, Seq} <- maps:to_list(rpc:call(A, ?MODULE, i_seqs, [], ?T)),
+                                   lists:member(X, U)]),
+-                   _ = multicall(U, i_merged, [G, U, Names, Stamps]),
++                   _ = multicall(U, i_merged, [G, U, Names, Stamps, MS]),
+                    _ = [exit(L, kill) || L <- Losers],
+                    ok
+            end).
+-- 
+2.50.1 (Apple Git-155)
+

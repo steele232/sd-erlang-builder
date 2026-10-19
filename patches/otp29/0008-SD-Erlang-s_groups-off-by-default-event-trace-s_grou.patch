@@ -1,7 +1,7 @@
-From 102d5bd02225a76e65c6a0b3782327c93f547838 Mon Sep 17 00:00:00 2001
+From 172bac0612b2b1947804d591c9a5ba93bca51918 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 12:05:53 -0700
-Subject: [PATCH 08/11] SD Erlang s_groups: off-by-default event trace
+Subject: [PATCH 08/12] SD Erlang s_groups: off-by-default event trace
  (-s_group_trace)
 
 ---

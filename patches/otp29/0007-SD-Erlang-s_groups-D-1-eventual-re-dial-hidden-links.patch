@@ -1,7 +1,7 @@
-From 0d58a644ea83d4e7fa2579e1aa46beffe333e49a Mon Sep 17 00:00:00 2001
+From d60ecc1eaf9f79b4bffc524aa797f4c5dddaa732 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 10:34:35 -0700
-Subject: [PATCH 07/11] SD Erlang s_groups: D-1 eventual, re-dial hidden links
+Subject: [PATCH 07/12] SD Erlang s_groups: D-1 eventual, re-dial hidden links
  to fellow members on the tick
 
 ---

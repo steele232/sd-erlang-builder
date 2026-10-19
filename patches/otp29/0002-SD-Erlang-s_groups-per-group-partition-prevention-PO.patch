@@ -1,7 +1,7 @@
-From aae2e8ca4f515fffbdb805ae0af0f449b8375ce9 Mon Sep 17 00:00:00 2001
+From 237831e305fea84521ad286717caa892ec0efc43 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan.steele232@gmail.com>
 Date: Sat, 17 Oct 2026 18:58:22 -0700
-Subject: [PATCH 02/11] SD Erlang s_groups: per-group partition prevention
+Subject: [PATCH 02/12] SD Erlang s_groups: per-group partition prevention
  (POP1) and partition merge (R-NS-1, U1)
 
 ---
