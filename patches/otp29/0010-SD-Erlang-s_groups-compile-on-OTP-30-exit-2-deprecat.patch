@@ -1,0 +1,29 @@
+From c227c6641e8bb66ac44b286d4309239fb7fe69e2 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 16:01:49 -0700
+Subject: [PATCH 10/11] SD Erlang s_groups: compile on OTP 30 (exit/2
+ deprecation)
+
+---
+ lib/kernel/src/s_group.erl | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 1283059..ce8eab6 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -34,6 +34,11 @@
+ 
+ -behaviour(gen_server).
+ 
++%% erlang:exit/2 (kill the loser of a name conflict, as 19.3's
++%% global:random_exit_name/3 does) is deprecated from OTP 30 in favour of
++%% exit_signal/2, which OTP 29 lacks; one source for both.
++-compile({nowarn_deprecated_function, [{erlang, exit, 2}]}).
++
+ %% API (19.3 shapes; spec/SD_ERLANG_SPEC.md 3)
+ -export([start_link/0]).
+ -export([new_s_group/2, add_nodes/2, remove_nodes/2, delete_s_group/1,
+-- 
+2.50.1 (Apple Git-155)
+

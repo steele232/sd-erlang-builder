@@ -1,8 +1,8 @@
-From b0e8d6a8f80289d3df37246974af9d49c07663d2 Mon Sep 17 00:00:00 2001
+From aae2e8ca4f515fffbdb805ae0af0f449b8375ce9 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan.steele232@gmail.com>
 Date: Sat, 17 Oct 2026 18:58:22 -0700
-Subject: [PATCH 2/9] SD Erlang s_groups: per-group partition prevention (POP1)
- and partition merge (R-NS-1, U1)
+Subject: [PATCH 02/11] SD Erlang s_groups: per-group partition prevention
+ (POP1) and partition merge (R-NS-1, U1)
 
 ---
  lib/kernel/src/s_group.erl | 261 +++++++++++++++++++++++++++++++------

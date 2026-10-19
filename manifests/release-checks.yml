@@ -1,0 +1,4 @@
+# Rebase verification runs of patches/otp29 (bin/sd-port-release-check).
+# Note: GitHub source archives are not guaranteed byte-stable over time; the
+# commit sha is the identity, the tarball hash records what was built.
+2026-10-19T23:01:13Z master 9580f21fb60b40c942478cf3dc443791a25717c7 apply=clean build=failed

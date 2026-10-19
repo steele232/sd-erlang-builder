@@ -4,7 +4,10 @@
 # replace the stock beams in the image's kernel ebin. Nothing else changes.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
-COPY build/port-src/ /tmp/sd-kernel/
+# PORT_SRC: patched modules prepared by bin/sd-build-port (default) or
+# bin/sd-port-release-check (per upstream snapshot).
+ARG PORT_SRC=build/port-src
+COPY ${PORT_SRC}/ /tmp/sd-kernel/
 RUN set -e; K=$(ls -d /usr/local/lib/erlang/lib/kernel-*); \
     for f in $(cat /tmp/sd-kernel/CHANGED); do \
       cp /tmp/sd-kernel/src/$f.erl $K/src/$f.erl; \

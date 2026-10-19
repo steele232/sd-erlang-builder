@@ -1,0 +1,14 @@
+# Stock OTP built from an upstream source snapshot (an untagged commit such as
+# master), for rebase verification of patches/otp29 (bin/sd-port-release-check).
+# Build context: build/otp-src-ctx/ holding otp.tar.gz (the snapshot) and
+# rebar3 (pinned escript); hashes are checked by the script before the build.
+# The source tree is kept under /usr/src/otp so the patch set can be applied
+# to exactly the code that was built.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY otp.tar.gz rebar3 /tmp/
+RUN set -e; mkdir -p /usr/src/otp && tar -xzf /tmp/otp.tar.gz -C /usr/src/otp --strip-components=1 \
+ && cd /usr/src/otp && ./configure --without-javac >/tmp/configure.log 2>&1 \
+ && make -j"$(nproc)" >/tmp/make.log 2>&1 && make install >/tmp/install.log 2>&1 \
+ && install -m 0755 /tmp/rebar3 /usr/local/bin/rebar3 && rm -f /tmp/otp.tar.gz /tmp/rebar3 \
+ && erl -noshell -eval 'io:format("~s~n", [erlang:system_info(otp_release)]), halt().'

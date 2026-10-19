@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Rebase verification of patches/otp29 against an upstream OTP source snapshot:
+#   bin/sd-port-release-check REF        REF = a branch (master) or tag (OTP-29.2)
+#   bin/sd-port-release-check REF --no-gate   build and apply only
+#
+# Steps:
+#   1. resolve REF to a commit;
+#   2. build stock OTP from that snapshot (containers/otp/Containerfile.source);
+#   3. apply the patch series to that exact source (git am --3way); stop on conflict;
+#   4. build the SD kernel image on it (containers/port/Containerfile.kernel);
+#   5. record a stock L5 reference twice (self-agreement is reported);
+#   6. run bin/sd-gate with that reference.
+# Results: test-results/release-check-<sha12>/ and a line in
+# manifests/release-checks.yml.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REF="${1:?usage: sd-port-release-check REF [--no-gate]}"
+NOGATE="${2:-}"
+# Pins: build base (Debian trixie, as the official erlang:29.1.2 image) and rebar3
+# (the version the official image ships). Arch-specific digests.
+case "$(uname -m)" in
+  arm64|aarch64) BASE="docker.io/library/buildpack-deps@sha256:5f1ada0ba6a57173dfbc1abfa65eb26afb3437220e3011223eec82b8eff224b1" ;;
+  *) echo "add an amd64 buildpack-deps:trixie digest" >&2; exit 2 ;;
+esac
+REBAR3_URL=https://github.com/erlang/rebar3/releases/download/3.27.0/rebar3
+REBAR3_SHA256=af85aab41f9fd74bdd6341ebdf6fe9c88077aab9f8eac82371583fa02f2b0bdf
+
+SHA="$(git -C "$ROOT/archive/release-otp.git" ls-remote upstream "refs/heads/$REF" "refs/tags/$REF" "refs/tags/$REF^{}" | awk '{print $1}' | tail -1)"
+[ -n "$SHA" ] || { echo "cannot resolve $REF" >&2; exit 2; }
+S12="${SHA:0:12}"
+OUT="$ROOT/test-results/release-check-$S12"; mkdir -p "$OUT"
+STOCK="localhost/otp-src:$S12"
+SD="localhost/sd-erlang:rel-$S12-sd-kernel"
+echo "== $REF = $SHA"
+
+# 2. stock OTP from source
+CTX="$ROOT/build/otp-src-ctx-$S12"
+if ! podman image exists "$STOCK"; then
+  mkdir -p "$CTX"
+  curl -sfL -o "$CTX/otp.tar.gz" "https://github.com/erlang/otp/archive/$SHA.tar.gz"
+  curl -sfL -o "$CTX/rebar3" "$REBAR3_URL"
+  echo "$REBAR3_SHA256  $CTX/rebar3" | shasum -a 256 -c - >/dev/null
+  echo "   building stock OTP from source (tens of minutes)"
+  podman build --quiet --build-arg BASE_IMAGE="$BASE" -f "$ROOT/containers/otp/Containerfile.source" \
+    -t "$STOCK" "$CTX" >/dev/null
+fi
+TARSHA="$( [ -f "$CTX/otp.tar.gz" ] && shasum -a 256 "$CTX/otp.tar.gz" | cut -d' ' -f1 || echo unknown)"
+REL="$(podman run --rm "$STOCK" erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().')"
+echo "   stock image $STOCK (OTP $REL)"
+
+# 3. apply the series to the snapshot's lib/kernel
+T="$ROOT/build/rel-$S12"; rm -rf "$T"; mkdir -p "$T/lib"
+CID="$(podman create "$STOCK")"; podman cp "$CID:/usr/src/otp/lib/kernel" "$T/lib/kernel"; podman rm "$CID" >/dev/null
+( cd "$T" && git init -q && git add -A && git -c user.name=upstream -c user.email=upstream@invalid commit -qm "$REF $SHA lib/kernel" && git tag base )
+for p in "$ROOT"/patches/otp29/*.patch; do
+  if ! (cd "$T" && git am -q --3way "$p" >/dev/null 2>&1); then
+    echo "   CONFLICT applying $(basename "$p"): $(cd "$T" && git diff --name-only --diff-filter=U | tr '\n' ' ')"
+    (cd "$T" && git am --abort >/dev/null 2>&1) || true
+    echo "$(date -u +%FT%TZ) $REF $SHA apply=conflict" >> "$ROOT/manifests/release-checks.yml"; exit 1
+  fi
+done
+echo "   all $(ls "$ROOT"/patches/otp29/*.patch | wc -l | tr -d ' ') patches apply"
+
+# 4. SD kernel image
+PS="build/port-src-$S12"; rm -rf "$ROOT/$PS"; mkdir -p "$ROOT/$PS/src"
+CHANGED=$(git -C "$T" diff --name-only base HEAD -- lib/kernel/src | grep '\.erl$' | xargs -n1 basename | sed 's/\.erl$//')
+for m in $CHANGED; do cp "$T/lib/kernel/src/$m.erl" "$ROOT/$PS/src/"; done
+echo "$CHANGED" > "$ROOT/$PS/CHANGED"
+(cd "$ROOT" && ls patches/otp29/*.patch | xargs shasum -a 256) > "$ROOT/$PS/PATCHES"
+if ! podman build --quiet --build-arg BASE_IMAGE="$STOCK" --build-arg PORT_SRC="$PS" \
+       -f "$ROOT/containers/port/Containerfile.kernel" -t "$SD" "$ROOT" > "$OUT/build.log" 2>&1; then
+  echo "   BUILD FAILED (patched kernel does not compile): $OUT/build.log"; tail -15 "$OUT/build.log"
+  echo "$(date -u +%FT%TZ) $REF $SHA apply=clean build=failed" >> "$ROOT/manifests/release-checks.yml"; exit 1
+fi
+podman run --rm "$SD" erl -noshell -eval 'halt(case whereis(s_group) of undefined -> 1; _ -> 0 end).' \
+  || { echo "   SD image does not boot with s_group"; exit 1; }
+echo "   SD image $SD boots with s_group"
+[ "$NOGATE" = --no-gate ] && exit 0
+
+# 5. stock L5 reference (twice: self-agreement)
+P=test-results/pbt
+for k in a b; do
+  "$ROOT/bin/sd-pbt" eval "sd_free_equiv:record(\"/pbt/out/free-corpus-v1.eterm\", \"/pbt/out/free-stock-$S12-$k.eterm\")" "$STOCK" > "$OUT/l5-ref-$k.log" 2>&1
+done
+(cd "$ROOT/test/pbt" && erlc -I . sd_free_equiv.erl sd_compat.erl)
+SELF="$(erl -noshell -pa "$ROOT/test/pbt" -eval "sd_free_equiv:compare(\"$ROOT/$P/free-corpus-v1.eterm\", \"$ROOT/$P/free-stock-$S12-a.eterm\", \"$ROOT/$P/free-stock-$S12-b.eterm\"), halt()." 2>&1 | grep identical)"
+echo "   stock L5 self-agreement: $SELF"
+
+# 6. gate
+L5_REF="free-stock-$S12-a.eterm" REPLAYS="${REPLAYS:-l1-sdk-noconnection.eterm l1-c4-joinrace.eterm l1-sdx-freemesh.eterm l1-sdk-freedhidden.eterm l1-sdk-redial.eterm}" \
+  "$ROOT/bin/sd-gate" "$SD" "rel-$S12" | tee "$OUT/gate.summary"
+echo "$(date -u +%FT%TZ) $REF $SHA otp=$REL tarball_sha256=$TARSHA apply=clean build=ok l5_self=\"$SELF\" gate=$OUT/gate.summary" >> "$ROOT/manifests/release-checks.yml"

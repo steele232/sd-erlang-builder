@@ -103,3 +103,21 @@ that produced a false counterexample.)
 With 2 failures: plain `logical` is violated (135k states). `logical_epoch`
 was stopped at 22.6M distinct states without a violation: incomplete.
 
+
+## Connection-layer models (hardening phase)
+
+Each model has a rule switch: the rule *before* a kernel fix must reproduce
+the defect that fix addressed (`EXPECT: violation` configs), and the current
+rule must pass. That validates every model against a bug that actually
+happened, rather than trusting it.
+
+| model | what it captures | old rule reproduces | current rule |
+|---|---|---|---|
+| `SGroupLockScope.tla` | name operations and merges vs the group lock's scope | 0009: a registration writes to the partition it read before the lock, and a merge in between leaves a member without the name (`_old`) | pass (`_new`) |
+| `SGroupNameGC.tla` | names of processes on a node that crashes, restarts (incarnations) or is re-dialled; asynchronous `nodedown`/`DOWN` | the milestone-1 `noconnection` broadcast loses a live name (`_ncbroadcast`); pre-0005 local delete on `nodedown` diverges replicas (`_nodedown`); the first 0006 attempt keeps a dead pid (`_deferred`) | liveness-based, propagated cleanup: Agree, NoLiveLost, NoDeadKept all hold (`_liveness`) |
+| `SGroupVisibility.tla` | visibility fixed at handshake; install ordering; D-1 re-dials | pre-0007 one-shot member re-dial (`_oneshot_mesh`); pre-0004 no free re-dial (`_no_free_redial`); **0004's one-shot free re-dial, found by this model** (`_oneshot_free_redial`, fixed in 0011) | both re-dials eventual (`_current`) |
+
+Not modellable here: the boot deadlock (an OTP startup-ordering fact, caught
+by the image build). The join race (`l1-c4-joinrace`) concerns the
+implementation's transient links vs the abstract model's connection set, and
+is covered by L1's C4 check and its regression replay.

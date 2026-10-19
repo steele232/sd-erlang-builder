@@ -1,7 +1,7 @@
-From a0e510745caa2a7cce497c6651bb4a081f78af12 Mon Sep 17 00:00:00 2001
+From 5cbdb63eb6a7319cd1a07d875890237c56eb390a Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 08:14:14 -0700
-Subject: [PATCH 3/9] SD Erlang s_groups: -rsconfig persists every membership
+Subject: [PATCH 03/11] SD Erlang s_groups: -rsconfig persists every membership
  change (R-PERS-1)
 
 ---

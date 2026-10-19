@@ -4,6 +4,8 @@
 %% nodedown) wipes global's knowledge in the EXISTING shared group, and only
 %% the new group is re-synced (same class as Q2).
 -module(sd_pbt_q1).
+%% exit/2 is deprecated from OTP 30 (exit_signal/2), which OTP 20-29 lack.
+-compile({nowarn_deprecated_function, [{erlang, exit, 2}]}).
 
 -include("sd_compat.hrl").
 
