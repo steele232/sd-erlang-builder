@@ -1,0 +1,174 @@
+From 6d579396b11792ff69746e9b37eda74463fec114 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 09:53:57 -0700
+Subject: [PATCH 6/6] SD Erlang s_groups: names of a down node are dropped by
+ liveness, consistently across the partition; merges never carry dead pids
+
+---
+ lib/kernel/src/s_group.erl | 87 ++++++++++++++++++++++++++++++++------
+ 1 file changed, 75 insertions(+), 12 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 1a1b813..3a2df10 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -48,13 +48,20 @@
+ %% internal (called on other members)
+ -export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
+          i_names/1, i_is_free/0, i_sync_set/1, i_connect_all/1, i_seqs/0,
+-         i_merged/4]).
++         i_merged/4, i_alive/1]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+          code_change/3]).
+ 
+ -define(T, 15000).
+ -define(VIEW, s_group_view).
+ -define(MERGE_TICK_MS, 2000).
++%% After a node goes down, the names of its processes are checked every
++%% ?NODE_GC_STEP_MS: once the node is reachable again, its dead pids (dead
++%% processes, or pids of an earlier incarnation) are dropped; if it stays
++%% unreachable for ?NODE_GC_MS, all of them are. A deliberate re-dial
++%% reconnects within milliseconds and drops nothing.
++-define(NODE_GC_STEP_MS, 500).
++-define(NODE_GC_MS, 4000).
+ 
+ %% groups :: #{G => [node()]}; names :: #{G => #{Name => pid()}};
+ %% mons :: #{reference() => {G, Name}}; conns :: #{node() => ConnectionId}
+@@ -300,6 +307,7 @@ i_delete(G, Name, Pid) -> gen_server:call(?MODULE, {delete, G, Name, Pid}, ?T).
+ i_lookup(G, Name) -> maps:get(Name, maps:get(G, all_names(), #{}), undefined).
+ i_names(G) -> maps:get(G, all_names(), #{}).
+ i_is_free() -> view_groups() =:= #{} andalso not hidden().
++i_alive(Pids) -> [P || P <- Pids, is_process_alive(P)].
+ i_sync_set(G) -> [node() | in_sync(G)].
+ i_seqs() -> gen_server:call(?MODULE, seqs, ?T).
+ i_merged(G, Union, Names, Stamps) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps}, ?T).
+@@ -437,6 +445,8 @@ handle_cast({merge_request, G, From}, S) ->
+     {noreply, leave_partition(G, From, S)};
+ handle_cast({merge_done, G}, S) ->
+     {noreply, S#st{merging = maps:remove(G, S#st.merging)}};
++handle_cast({pids_dead, Dead}, S) ->
++    {noreply, drop_dead(Dead, S)};
+ handle_cast({redialing, Peer}, S) ->
+     {noreply, mark_redial([Peer], S)};
+ handle_cast({pid_down, G, Name, Pid}, S) ->
+@@ -466,11 +476,20 @@ handle_cast({became_free, Node}, S) ->
+     {noreply, S};
+ handle_cast(_, S) -> {noreply, S}.
+ 
+-handle_info({'DOWN', Ref, process, _Pid, noconnection}, S) ->
+-    %% The link went down, not the process (e.g. the D-1 re-dial in
+-    %% {mesh, _}). nodedown drops the name locally; the merge on reconnect
+-    %% restores it. Never tell the other replicas the process died.
+-    {noreply, S#st{mons = maps:remove(Ref, S#st.mons)}};
++handle_info({'DOWN', Ref, process, Pid, noconnection}, S)
++  when node(Pid) =/= node() ->
++    case lists:member(node(Pid), nodes(connected)) of
++        true ->
++            %% The node is connected, so the pid belongs to an earlier
++            %% incarnation of it (it restarted): the process is dead.
++            handle_info({'DOWN', Ref, process, Pid, dead_incarnation}, S);
++        false ->
++            %% The link went down, not the process (e.g. a D-1 re-dial).
++            %% The node's names go only if it stays down ({gc_node, ...});
++            %% the monitor is re-established when it reconnects. Never tell
++            %% the other replicas the process died.
++            {noreply, S#st{mons = maps:remove(Ref, S#st.mons)}}
++    end;
+ handle_info({'DOWN', Ref, process, Pid, _}, S) ->
+     case maps:take(Ref, S#st.mons) of
+         {{G, Name}, Mons} ->
+@@ -500,6 +519,29 @@ handle_info({nodedown, N, _Info}, S0) ->
+         true -> {noreply, S1};              % a deliberate re-dial, not a failure
+         false -> {noreply, node_lost(N, S1)}
+     end;
++%% Liveness check for the names of N's processes after N went down (Seq).
++handle_info({gc_node, N, Seq, Left}, S) ->
++    Pids = lists:usort([P || Ns <- maps:values(S#st.names), P <- maps:values(Ns), node(P) =:= N]),
++    Connected = lists:member(N, nodes(connected)),
++    if
++        Pids =:= [] ->
++            {noreply, S};
++        Connected ->
++            Self = self(),
++            _ = spawn(fun() ->
++                              Alive = try erpc:call(N, ?MODULE, i_alive, [Pids], ?T)
++                                      catch _:_ -> Pids
++                                      end,
++                              gen_server:cast(Self, {pids_dead, Pids -- Alive})
++                      end),
++            {noreply, S};
++        Left =< 0 ->
++            {noreply, drop_dead(Pids, S)};
++        true ->
++            _ = erlang:send_after(?NODE_GC_STEP_MS, self(),
++                                  {gc_node, N, Seq, Left - ?NODE_GC_STEP_MS}),
++            {noreply, S}
++    end;
+ handle_info(merge_tick, S) ->
+     {noreply, merge_tick(S)};
+ handle_info(merge_timer, S) ->
+@@ -507,12 +549,10 @@ handle_info(merge_timer, S) ->
+     {noreply, merge_tick(S)};
+ handle_info(_, S) -> {noreply, S}.
+ 
+-node_lost(N, S1) ->
+-    Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S1#st.names), {Nm, P} <- maps:to_list(Ns),
+-                          node(P) =:= N],
+-    S2 = lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S1, Gone),
+-    %% POP1: report the lost link to the rest of each partition it was in.
++node_lost(N, S2) ->
++    %% POP1: report the lost link to the rest of each partition it was in, now.
+     Seq = maps:get(N, S2#st.seq),
++    _ = erlang:send_after(?NODE_GC_STEP_MS, self(), {gc_node, N, Seq, ?NODE_GC_MS}),
+     S3 = lists:foldl(
+            fun(G, Acc) ->
+                    case lists:member(N, maps:get(G, Acc#st.sync, [])) of
+@@ -672,6 +712,18 @@ static_groups({ok, Other}) -> {error, {bad_s_groups, Other}}.
+ %% Partitions of a group (POP1) and the merge that heals them (R-NS-1)
+ %%--------------------------------------------------------------------
+ 
++%% Drop the names of dead pids here and in the rest of each partition, so
++%% that all replicas agree (pid_down is idempotent).
++drop_dead(Dead, S) ->
++    lists:foldl(
++      fun({G, Nm, P}, Acc) ->
++              _ = [gen_server:cast({?MODULE, R}, {pid_down, G, Nm, P})
++                   || R <- maps:get(G, Acc#st.sync, [])],
++              del_pid_name(G, Nm, P, Acc)
++      end, S,
++      [{G, Nm, P} || {G, Ns} <- maps:to_list(S#st.names), {Nm, P} <- maps:to_list(Ns),
++                     lists:member(P, Dead)]).
++
+ %% D-1 re-dials disconnect a link on purpose. Both ends are marked before the
+ %% disconnect (the peer by a message sent ahead of it on the same link), so
+ %% the nodedown neither drops names nor reports a lost link.
+@@ -766,7 +818,7 @@ merge(G, Y) ->
+                    NI = i_names(G),
+                    NY = rpc:call(Y, ?MODULE, i_names, [G], ?T),
+                    true = is_map(NY),
+-                   {Names, Losers} = resolve(NI, NY),
++                   {Names, Losers} = resolve(alive_only(NI, U), alive_only(NY, U)),
+                    Stamps = maps:from_list(
+                               [{{A, X}, Seq}
+                                || A <- U,
+@@ -777,6 +829,17 @@ merge(G, Y) ->
+                    ok
+            end).
+ 
++%% A merge must never carry a dead pid into the union (e.g. one of an earlier
++%% incarnation of a restarted node): it could otherwise win a name conflict
++%% and kill the live process. Pids on reachable nodes are checked.
++alive_only(Names, U) ->
++    ByNode = maps:groups_from_list(fun node/1, lists:usort(maps:values(Names))),
++    Dead = lists:append(
++             [Ps -- (try erpc:call(Nd, ?MODULE, i_alive, [Ps], ?T) catch _:_ -> Ps end)
++              || {Nd, Ps} <- maps:to_list(ByNode),
++                 Nd =:= node() orelse lists:member(Nd, nodes(connected)) orelse lists:member(Nd, U)]),
++    maps:filter(fun(_Nm, P) -> not lists:member(P, Dead) end, Names).
++
+ resolve(NI, NY) ->
+     {Merged, Losers} =
+         maps:fold(fun(Nm, P, {Acc, Ls}) ->
+-- 
+2.50.1 (Apple Git-155)
+

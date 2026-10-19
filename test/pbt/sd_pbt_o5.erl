@@ -62,7 +62,7 @@ trial(_I, CapMs) ->
     case wait(Members, P, T0, T0 + CapMs) of
         {Outcome, X} ->
             Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
-            RegKnown = rpc:call(N("n4"), global, get_known_s_group, [g3]),
+            RegKnown = sd_pbt_obs:known_on(N("n4"), g3),
             Unknown = (Members -- [N("n4")]) -- RegKnown,
             {Outcome, X, {short(Lagging), short(Missing)}, short(Unknown)}
     end.

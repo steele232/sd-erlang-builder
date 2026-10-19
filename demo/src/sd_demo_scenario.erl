@@ -153,8 +153,17 @@ step_crash_isolation() ->
     rpc:cast(?CONNECTOR, erlang, halt, [1]),
     await("gateway sees connector down",
           fun() -> not lists:member(?CONNECTOR, nodes()) end),
+    %% P16: the dead pid leaves the namespace. With a fast restart the new
+    %% worker may already have re-registered (OTP 29 can do both within
+    %% ~300 ms), so "undefined" need not be observable; what must hold is
+    %% that the name no longer resolves to a dead process.
     await("gateway's external_ai name table drops the dead worker_pool",
-          fun() -> s_group:whereis_name(external_ai, worker_pool) =:= undefined end),
+          fun() ->
+                  case s_group:whereis_name(external_ai, worker_pool) of
+                      undefined -> true;
+                      P -> rpc:call(node(P), erlang, is_process_alive, [P]) =:= true
+                  end
+          end),
     LocalDuringOutage = round_trip(local_ai, ?GPU1),
     check("gpu1 membership untouched by connector crash",
           [{local_ai, [?GATEWAY, ?GPU1]}], own_groups(?GPU1)),

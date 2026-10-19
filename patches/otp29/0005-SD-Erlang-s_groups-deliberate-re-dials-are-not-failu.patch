@@ -1,0 +1,166 @@
+From d3ae64abf3fc70cbfd7e76a6b435857c9aae9241 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 09:46:52 -0700
+Subject: [PATCH 5/6] SD Erlang s_groups: deliberate re-dials are not failures;
+ re-monitor names after reconnect
+
+---
+ lib/kernel/src/s_group.erl | 82 +++++++++++++++++++++++++++-----------
+ 1 file changed, 59 insertions(+), 23 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index fd1f386..1a1b813 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -68,8 +68,11 @@
+ %%                              that link are stale;
+ %%   seen :: #{Report => true}  lost_connection reports already handled;
+ %%   merging :: #{G => true}    a merge for G is running on this node.
++%%   redial :: #{node() => true} links being re-dialled on purpose (D-1):
++%%                              their nodedown is not a failure.
+ -record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{},
+-             sync = #{}, seq = #{}, heals = #{}, seen = #{}, merging = #{}}).
++             sync = #{}, seq = #{}, heals = #{}, seen = #{}, merging = #{},
++             redial = #{}}).
+ 
+ start_link() ->
+     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+@@ -343,6 +346,7 @@ init([]) ->
+     end.
+ 
+ handle_call(names, _F, S) -> {reply, S#st.names, S};
++handle_call({redial, Nodes}, _F, S) -> {reply, ok, mark_redial(Nodes, S)};
+ handle_call(seqs, _F, S) -> {reply, S#st.seq, S};
+ handle_call({merged, G, Union, Names, Stamps}, _F, S) ->
+     case lists:member(node(), Union) andalso maps:is_key(G, S#st.groups) of
+@@ -386,16 +390,12 @@ handle_call({mesh, G}, _F, S) ->
+     %% published (visible) like any other intra-group link.
+     Hidden = nodes(hidden),
+     Others = maps:get(G, S#st.groups, []) -- [node()],
++    Redial = [N || N <- Others, lists:member(N, Hidden)],
+     _ = spawn(fun() ->
+-                      [begin
+-                           case lists:member(N, Hidden) of
+-                               true -> erlang:disconnect_node(N);
+-                               false -> ok
+-                           end,
+-                           net_kernel:connect_node(N)
+-                       end || N <- Others, not lists:member(N, nodes(visible))]
++                      [redial(N) || N <- Redial],
++                      [net_kernel:connect_node(N) || N <- Others, not lists:member(N, nodes(visible))]
+               end),
+-    {reply, ok, S};
++    {reply, ok, mark_redial(Redial, S)};
+ handle_call({drop, G}, _F, S) ->
+     S1 = set_groups(maps:remove(G, S#st.groups), S#st{names = maps:remove(G, S#st.names)}),
+     ets:delete(?VIEW, {sync, G}),
+@@ -437,6 +437,8 @@ handle_cast({merge_request, G, From}, S) ->
+     {noreply, leave_partition(G, From, S)};
+ handle_cast({merge_done, G}, S) ->
+     {noreply, S#st{merging = maps:remove(G, S#st.merging)}};
++handle_cast({redialing, Peer}, S) ->
++    {noreply, mark_redial([Peer], S)};
+ handle_cast({pid_down, G, Name, Pid}, S) ->
+     {noreply, del_pid_name(G, Name, Pid, S)};
+ %% Free namespace: Node answered that it is free; join global's partition
+@@ -479,7 +481,8 @@ handle_info({'DOWN', Ref, process, Pid, _}, S) ->
+         error -> {noreply, S}
+     end;
+ handle_info({nodeup, N, #{connection_id := CId} = Info}, S0) ->
+-    S = bump(N, S0#st{conns = maps:put(N, CId, S0#st.conns)}),
++    S = remonitor(N, bump(N, S0#st{conns = maps:put(N, CId, S0#st.conns),
++                                   redial = maps:remove(N, S0#st.redial)})),
+     %% A (re)connected fellow member is merged by the next tick (R-NS-1).
+     self() ! merge_tick,
+     _ = case maps:get(node_type, Info, visible) of
+@@ -493,6 +496,18 @@ handle_info({nodedown, N, _Info}, S0) ->
+     %% that held for the lost connection. A later check_free/2 or leaving
+     %% the free namespace removes it.
+     S1 = bump(N, S0#st{conns = maps:remove(N, S0#st.conns)}),
++    case maps:is_key(N, S1#st.redial) of
++        true -> {noreply, S1};              % a deliberate re-dial, not a failure
++        false -> {noreply, node_lost(N, S1)}
++    end;
++handle_info(merge_tick, S) ->
++    {noreply, merge_tick(S)};
++handle_info(merge_timer, S) ->
++    _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
++    {noreply, merge_tick(S)};
++handle_info(_, S) -> {noreply, S}.
++
++node_lost(N, S1) ->
+     Gone = [{G, Nm, P} || {G, Ns} <- maps:to_list(S1#st.names), {Nm, P} <- maps:to_list(Ns),
+                           node(P) =:= N],
+     S2 = lists:foldl(fun({G, Nm, P}, Acc) -> del_pid_name(G, Nm, P, Acc) end, S1, Gone),
+@@ -509,13 +524,7 @@ handle_info({nodedown, N, _Info}, S0) ->
+                        false -> Acc
+                    end
+            end, S2, maps:keys(S2#st.groups)),
+-    {noreply, S3};
+-handle_info(merge_tick, S) ->
+-    {noreply, merge_tick(S)};
+-handle_info(merge_timer, S) ->
+-    _ = erlang:send_after(?MERGE_TICK_MS, self(), merge_timer),
+-    {noreply, merge_tick(S)};
+-handle_info(_, S) -> {noreply, S}.
++    S3.
+ 
+ terminate(_, _) -> ok.
+ code_change(_, S, _) -> {ok, S}.
+@@ -552,13 +561,13 @@ set_groups(New, #st{groups = Old} = S) ->
+             _ = case hidden() of
+                     true -> ok;
+                     false ->
++                        Self = self(),
+                         spawn(fun() ->
+-                                      [begin
+-                                           erlang:disconnect_node(N),
+-                                           net_kernel:connect_node(N)
+-                                       end || N <- nodes(hidden),
+-                                              (try erpc:call(N, ?MODULE, i_is_free, [], ?T)
+-                                               catch _:_ -> false end) =:= true]
++                                      Free = [N || N <- nodes(hidden),
++                                                   (try erpc:call(N, ?MODULE, i_is_free, [], ?T)
++                                                    catch _:_ -> false end) =:= true],
++                                      gen_server:call(Self, {redial, Free}, ?T),
++                                      [redial(N) || N <- Free]
+                               end)
+                 end,
+             S1;
+@@ -663,6 +672,33 @@ static_groups({ok, Other}) -> {error, {bad_s_groups, Other}}.
+ %% Partitions of a group (POP1) and the merge that heals them (R-NS-1)
+ %%--------------------------------------------------------------------
+ 
++%% D-1 re-dials disconnect a link on purpose. Both ends are marked before the
++%% disconnect (the peer by a message sent ahead of it on the same link), so
++%% the nodedown neither drops names nor reports a lost link.
++mark_redial(Nodes, S) ->
++    S#st{redial = lists:foldl(fun(N, M) -> maps:put(N, true, M) end, S#st.redial, Nodes)}.
++
++redial(N) ->
++    gen_server:cast({?MODULE, N}, {redialing, node()}),
++    erlang:disconnect_node(N),
++    net_kernel:connect_node(N).
++
++%% Names whose pid lives on N lost their monitor when the link went down
++%% ('DOWN' noconnection); monitor them again now that N is back.
++remonitor(N, S) ->
++    Monitored = maps:values(S#st.mons),
++    maps:fold(fun(G, Ns, Acc) ->
++                      maps:fold(fun(Nm, P, A) when node(P) =:= N ->
++                                        case lists:member({G, Nm}, Monitored) of
++                                            true -> A;
++                                            false ->
++                                                Ref = erlang:monitor(process, P),
++                                                A#st{mons = maps:put(Ref, {G, Nm}, A#st.mons)}
++                                        end;
++                                   (_, _, A) -> A
++                                end, Acc, Ns)
++              end, S, S#st.names).
++
+ set_sync(G, Nodes, S) ->
+     L = lists:usort(Nodes),
+     ets:insert(?VIEW, {{sync, G}, L}),
+-- 
+2.50.1 (Apple Git-155)
+

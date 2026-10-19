@@ -33,7 +33,7 @@ trial() ->
                       b_c_connected => lists:member(C, rpc:call(B, erlang, nodes, [connected]))}}
     end.
 
-known(N, G) -> lists:sort(rpc:call(N, global, get_known_s_group, [G])).
+known(N, G) -> lists:sort(sd_pbt_obs:known_on(N, G)).
 
 settle(Fun, Ms) when Ms =< 0 -> case Fun() of true -> ok; false -> timeout end;
 settle(Fun, Ms) -> case Fun() of true -> ok; false -> timer:sleep(100), settle(Fun, Ms - 100) end.

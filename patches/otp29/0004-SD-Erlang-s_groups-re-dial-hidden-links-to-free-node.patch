@@ -1,0 +1,40 @@
+From 1966dcbc29b2f6f44edb03d496519a0e2e8bcbc2 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 09:15:11 -0700
+Subject: [PATCH 4/6] SD Erlang s_groups: re-dial hidden links to free nodes
+ when becoming free (D-1 for the free namespace)
+
+---
+ lib/kernel/src/s_group.erl | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 72c98ec..fd1f386 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -545,6 +545,22 @@ set_groups(New, #st{groups = Old} = S) ->
+                      gen_server:cast({?MODULE, N}, {became_free, node()}),
+                      check_free(N, S1)
+                  end || N <- nodes(visible)],
++            %% D-1 for the free namespace (JPDC'16: free nodes form the
++            %% 'undefined' group): a link made hidden while this node was a
++            %% member is re-dialled if the other end is a free normal node,
++            %% so the two are visible and mesh (S2, D3.3 NewFreeNodes).
++            _ = case hidden() of
++                    true -> ok;
++                    false ->
++                        spawn(fun() ->
++                                      [begin
++                                           erlang:disconnect_node(N),
++                                           net_kernel:connect_node(N)
++                                       end || N <- nodes(hidden),
++                                              (try erpc:call(N, ?MODULE, i_is_free, [], ?T)
++                                               catch _:_ -> false end) =:= true]
++                              end)
++                end,
+             S1;
+         _ ->
+             S1
+-- 
+2.50.1 (Apple Git-155)
+

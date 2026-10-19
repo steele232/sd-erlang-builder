@@ -25,7 +25,7 @@
 %% eventual equality: poll until I ~ M or the deadline passes.
 -module(sd_pbt_obs).
 
--export([observe/1, diff/3, await_conformance/3, await_quiescent/2]).
+-export([observe/1, diff/3, await_conformance/3, await_quiescent/2, known_on/2]).
 
 -define(POLL_MS, 100).
 
@@ -177,3 +177,12 @@ await_loop(Model, PidMaps, T0, Deadline) ->
                 false -> timer:sleep(?POLL_MS), await_loop(Model, PidMaps, T0, Deadline)
             end
     end.
+
+%% Group knowledge of N for G: 19.3's global:get_known_s_group/1, or a port's
+%% s_group:known_peers/1 (its in-sync set).
+known_on(N, G) ->
+    case is_port_runtime(N) of
+        true -> rpc:call(N, s_group, known_peers, [G]);
+        false -> rpc:call(N, global, get_known_s_group, [G])
+    end.
+

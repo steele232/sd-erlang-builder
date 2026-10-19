@@ -51,8 +51,19 @@ step repro-Q2           "$ROOT/bin/sd-pbt" eval 'sd_pbt_q2:run(5)' "$CAND"
 step repro-O5           "$ROOT/bin/sd-pbt" eval 'sd_pbt_o5:run(10, 30000)' "$CAND"
 if [ -f "$ROOT/test-results/pbt/golden-v1-19.3.eterm" ]; then
   cp "$ROOT/test/corpus/corpus-v1.eterm" "$ROOT/test-results/pbt/corpus-v1.eterm"
-  step L2-differential  "$ROOT/bin/sd-pbt" eval \
-    'sd_diff:compare("/pbt/out/corpus-v1.eterm", "/pbt/out/golden-v1-19.3.eterm")' "$CAND"
+  # Outcome sets over all reference recordings; the verdict is the core keys
+  # (all 30 inside) plus visibility triage (no lost link, no cross-group link),
+  # as required for ports (spec/VERIFICATION_STRATEGY.md, port/MILESTONES.md).
+  l2() {
+    T=test-results/pbt
+    "$ROOT/bin/sd-pbt" eval 'sd_diff:compare_set("/pbt/out/corpus-v1.eterm", ["/pbt/out/golden-v1-19.3.eterm", "/pbt/out/golden-v1-19.3-k1.eterm", "/pbt/out/golden-v1-19.3-k2.eterm", "/pbt/out/golden-v1-19.3-k3.eterm"], "/pbt/out/l2-accept.eterm")' "$CAND"
+    G="$T/golden-v1-19.3.eterm $T/golden-v1-19.3-k1.eterm $T/golden-v1-19.3-k2.eterm $T/golden-v1-19.3-k3.eterm"
+    core=$(cd "$ROOT" && L2_KEYS=own_s_groups,s_groups,names escript test/pbt/sd_l2_why.escript $T/l2-accept.eterm $G | head -1)
+    vis=$(cd "$ROOT" && escript test/pbt/sd_l2_vis.escript $T/l2-accept.eterm $G | head -1)
+    echo "core: $core"; echo "visibility: $vis"
+    echo "$core" | grep -q '#{inside => 30}' && ! echo "$vis" | grep -q BAD
+  }
+  step L2-differential  l2
 else
   printf '| L2-differential | SKIPPED | record golden traces on %s first |\n' "$REF" >>"$VERDICT"
 fi
