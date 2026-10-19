@@ -3,7 +3,8 @@
 #   L3 demo3 + demo15, L1 (200 cases, C4 on) + regression replays + 40-case
 #   profile, P18 vs 19.3, L2 vs 19.3 outcome sets (all keys and core keys),
 #   L5 free-node equivalence vs stock 29.1.2, POP1 partition scenario
-#   (bin/sd-pop, both orders), H2 / R-HID-1 and -rsconfig (R-PERS-1) probes.
+#   (bin/sd-pop, both orders), H2 / R-HID-1, -rsconfig (R-PERS-1), rejoin
+#   (D-7/D-8) and API-parity/via probes.
 #   TLA+ models: bin/sd-tla.
 #   bin/sd-gate IMAGE LABEL          (REPLAYS="file.eterm ..." from test/corpus;
 #                                     L5_REF=stock reference trace file, default free-stock29.eterm)
@@ -30,5 +31,7 @@ bin/sd-pbt eval "sd_free_equiv:record(\"/pbt/out/free-corpus-v1.eterm\", \"/pbt/
 erl -noshell -pa "$ROOT/test/pbt" -eval "sd_free_equiv:compare(\"$T/free-corpus-v1.eterm\", \"$T/${L5_REF:-free-stock29.eterm}\", \"$T/free-$TAG.eterm\"), halt()." 2>&1 | grep "identical\|modulo"
 echo "H2: $(bin/sd-pbt eval 'sd_pbt_h2:run()' $IMG 2>&1 | grep -E 'CONFORMS|DIVERGES')"
 echo "rsconfig: $(bin/sd-pbt eval 'sd_pbt_rsconfig:run(3)' $IMG 2>&1 | grep '^rsconfig' | tr '\n' ' ')"
+echo "rejoin: $(bin/sd-pbt eval 'sd_pbt_rejoin:run()' $IMG 2>&1 | grep -E '^rejoin|REJOIN RESULT' | tr '\n' ' ')"
+echo "api: $(bin/sd-pbt eval 'sd_pbt_api:run()' $IMG 2>&1 | grep 'API RESULT')"
 bin/sd-pop "$IMG" > $S/pop.txt 2>&1; echo "POP: $(grep 'POP RESULT' $S/pop.txt)"
 echo GATE_DONE

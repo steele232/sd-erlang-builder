@@ -1,0 +1,144 @@
+From 415eecfcf73abcc4356a8156f49ea24372889cf1 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 16:23:53 -0700
+Subject: [PATCH 14/14] SD Erlang s_groups: 19.3 API parity (new_s_group/1,
+ monitor_nodes/1, attributes/2, *_external) and {via, s_group, {G, Name}}
+
+---
+ lib/kernel/src/s_group.erl | 71 ++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 69 insertions(+), 2 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index fd4e879..c9a9eb0 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -41,6 +41,11 @@
+ 
+ %% API (19.3 shapes; spec/SD_ERLANG_SPEC.md 3)
+ -export([start_link/0]).
++%% {via, s_group, {Group, Name}} for gen_server & co (additive; 19.3 had none)
++-export([register_name/2, unregister_name/1, whereis_name/1, send/2]).
++%% 19.3 API parity (patch 0014)
++-export([new_s_group/1, monitor_nodes/1, add_attributes/2, remove_attributes/1,
++         remove_attributes/2, register_name_external/3, unregister_name_external/2]).
+ -export([new_s_group/2, add_nodes/2, remove_nodes/2, delete_s_group/1,
+          register_name/3, re_register_name/3, unregister_name/2,
+          whereis_name/2, whereis_name/3, send/3, send/4, registered_names/1,
+@@ -97,7 +102,7 @@
+ %%   tomb :: #{{G, Inc} => true} deleted incarnations (stale claims lose).
+ -record(st, {groups = #{}, names = #{}, mons = #{}, attrs = [], conns = #{},
+              sync = #{}, seq = #{}, heals = #{}, seen = #{}, merging = #{},
+-             redial = #{}, ms = #{}, tomb = #{}}).
++             redial = #{}, ms = #{}, tomb = #{}, monitors = []}).
+ 
+ start_link() ->
+     gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+@@ -106,6 +111,15 @@ start_link() ->
+ %% Membership
+ %%--------------------------------------------------------------------
+ 
++%% JPDC'16 Listing 2: a group with a generated name. 19.3 used
++%% crypto:strong_rand_bytes(30); the kernel cannot depend on crypto, so rand.
++new_s_group(Nodes) ->
++    G = list_to_atom(binary_to_list(rand:bytes(30))),
++    case new_s_group(G, Nodes) of
++        {error, s_group_name_is_in_use} -> new_s_group(Nodes);
++        Result -> Result
++    end.
++
+ new_s_group(G, Nodes0) ->
+     Nodes = lists:usort(Nodes0),
+     case {lists:member(node(), Nodes), maps:is_key(G, groups())} of
+@@ -277,7 +291,46 @@ info() -> [{state, synced}, {own_s_groups, own_s_groups()}].
+ %% replica of G is in step with.
+ known_peers(G) -> in_sync(G).
+ 
+-add_attributes(As) -> gen_server:call(?MODULE, {add_attributes, As}).
++add_attributes(As) when is_list(As) -> gen_server:call(?MODULE, {add_attributes, As});
++add_attributes(_) -> {error, parameter_should_be_a_list}.
++
++%% On other nodes; returns the nodes where it succeeded (19.3).
++add_attributes(Nodes, As) when is_list(Nodes), is_list(As) ->
++    [N || N <- Nodes, rpc:call(N, ?MODULE, add_attributes, [As], ?T) =:= ok];
++add_attributes(_, _) -> {error, parameter_should_be_a_list}.
++
++remove_attributes(As) when is_list(As) -> gen_server:call(?MODULE, {remove_attributes, As});
++remove_attributes(_) -> {error, parameter_should_be_a_list}.
++
++remove_attributes(Nodes, As) when is_list(Nodes), is_list(As) ->
++    [N || N <- Nodes, rpc:call(N, ?MODULE, remove_attributes, [As], ?T) =:= ok];
++remove_attributes(_, _) -> {error, parameter_should_be_a_list}.
++
++%% The caller receives {nodeup, Node} / {nodedown, Node} for nodes of its
++%% own groups (19.3, from global_group:monitor_nodes/1).
++monitor_nodes(Flag) when is_boolean(Flag) -> gen_server:call(?MODULE, {monitor_nodes, Flag});
++monitor_nodes(_) -> {error, not_boolean}.
++
++%% 19.3 registered names for processes of external (C) nodes through the
++%% calling node. Here they behave as register_name/3 and unregister_name/2;
++%% 19.3's extra cleanup when the registering node itself dies is not
++%% reproduced (documented in port/KERNEL_PORT.md).
++register_name_external(G, Name, Pid) -> register_name(G, Name, Pid).
++
++%% The via callbacks (contract of gen:start/..., global:register_name/2 shapes).
++register_name({G, Name}, Pid) ->
++    case register_name(G, Name, Pid) of
++        yes -> yes;
++        _ -> no
++    end.
++unregister_name({G, Name}) -> _ = unregister_name(G, Name), ok.
++whereis_name({G, Name}) -> whereis_name(G, Name).
++send({G, Name} = Via, Msg) ->
++    case whereis_name(G, Name) of
++        P when is_pid(P) -> P ! Msg, P;
++        undefined -> exit({badarg, {Via, Msg}})
++    end.
++unregister_name_external(G, Name) -> unregister_name(G, Name).
+ registered_attributes() -> gen_server:call(?MODULE, attributes).
+ 
+ choose_nodes(Args) ->
+@@ -439,6 +492,12 @@ handle_call({merged, G, Union, Names, Stamps, MS}, _F, S0) ->
+ handle_call(attributes, _F, S) -> {reply, S#st.attrs, S};
+ handle_call({add_attributes, As}, _F, S) ->
+     {reply, ok, S#st{attrs = lists:usort(S#st.attrs ++ As)}};
++handle_call({remove_attributes, As}, _F, S) ->
++    {reply, ok, S#st{attrs = S#st.attrs -- As}};
++handle_call({monitor_nodes, true}, {Pid, _}, S) ->
++    {reply, ok, S#st{monitors = [Pid | S#st.monitors]}};
++handle_call({monitor_nodes, false}, {Pid, _}, S) ->
++    {reply, ok, S#st{monitors = S#st.monitors -- [Pid]}};
+ handle_call({install, G, MS0, Names}, _F, S) ->
+     %% An install comes from a member under the group lock: it is
+     %% authoritative for its incarnation (a different local incarnation of
+@@ -614,6 +673,7 @@ handle_info({nodeup, N, #{connection_id := CId} = Info}, S0) ->
+                                    redial = maps:remove(N, S0#st.redial)})),
+     %% A (re)connected fellow member is merged by the next tick (R-NS-1).
+     self() ! merge_tick,
++    notify_monitors(nodeup, N, S),
+     _ = case maps:get(node_type, Info, visible) of
+             visible -> check_free(N, S);
+             hidden -> ok
+@@ -625,6 +685,7 @@ handle_info({nodedown, N, _Info}, S0) ->
+     %% that held for the lost connection. A later check_free/2 or leaving
+     %% the free namespace removes it.
+     S1 = bump(N, S0#st{conns = maps:remove(N, S0#st.conns)}),
++    notify_monitors(nodedown, N, S1),
+     case maps:is_key(N, S1#st.redial) of
+         true -> {noreply, S1};              % a deliberate re-dial, not a failure
+         false -> {noreply, node_lost(N, S1)}
+@@ -934,6 +995,12 @@ drop_dead(Dead, S) ->
+       [{G, Nm, P} || {G, Ns} <- maps:to_list(S#st.names), {Nm, P} <- maps:to_list(Ns),
+                      lists:member(P, Dead)]).
+ 
++notify_monitors(What, N, S) ->
++    case lists:member(N, lists:append(maps:values(S#st.groups))) of
++        true -> [P ! {What, N} || P <- S#st.monitors], ok;
++        false -> ok
++    end.
++
+ %% D-1 re-dials disconnect a link on purpose. Both ends are marked before the
+ %% disconnect (the peer by a message sent ahead of it on the same link), so
+ %% the nodedown neither drops names nor reports a lost link.
+-- 
+2.50.1 (Apple Git-155)
+

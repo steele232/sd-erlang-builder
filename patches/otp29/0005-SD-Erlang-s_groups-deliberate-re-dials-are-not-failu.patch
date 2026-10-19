@@ -1,7 +1,7 @@
-From 3f50afe59e35d539aa986fdc387f50df8358e262 Mon Sep 17 00:00:00 2001
+From 106c0af0919fd9785fe6076308b111c149f5bf26 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 09:46:52 -0700
-Subject: [PATCH 05/13] SD Erlang s_groups: deliberate re-dials are not
+Subject: [PATCH 05/14] SD Erlang s_groups: deliberate re-dials are not
  failures; re-monitor names after reconnect
 
 ---

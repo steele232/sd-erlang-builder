@@ -1,7 +1,7 @@
-From ef9b8aac81d701e10aa2c8445e17dc0cd8e70de8 Mon Sep 17 00:00:00 2001
+From 5bbfe6a77fee07fb9e250363f240ae138342d3ab Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 16:03:42 -0700
-Subject: [PATCH 11/13] SD Erlang s_groups: free-namespace re-dial is eventual
+Subject: [PATCH 11/14] SD Erlang s_groups: free-namespace re-dial is eventual
  too (model-found race)
 
 ---

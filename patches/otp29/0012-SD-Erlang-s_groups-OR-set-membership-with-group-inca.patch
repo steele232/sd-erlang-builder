@@ -1,7 +1,7 @@
-From 40be4e1c22c0fa1cb54d47590d47ad8ac2b6590f Mon Sep 17 00:00:00 2001
+From 76c15f68afaf3acc451fe093911d2d344ba9fb3e Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 16:10:00 -0700
-Subject: [PATCH 12/13] SD Erlang s_groups: OR-set membership with group
+Subject: [PATCH 12/14] SD Erlang s_groups: OR-set membership with group
  incarnations (D-8), rejoin as claim (D-7), anti-entropy (D-9)
 
 ---
