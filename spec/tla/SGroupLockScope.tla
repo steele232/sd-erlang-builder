@@ -21,10 +21,14 @@
 (* a member into the registrant's partition between the registrant's read *)
 (* and its commit; the member never received the name, all in-sync sets   *)
 (* were complete, so nothing ever repaired it.                             *)
+(*                                                                         *)
+(* AntiEntropy (decision D-9): members in step compare table hashes and   *)
+(* repair a difference by merging. It must make even the OLD rule converge *)
+(* (defence in depth), and must not disturb the new one.                   *)
 (***************************************************************************)
 EXTENDS FiniteSets, Naturals
 
-CONSTANTS Rules, MaxOps
+CONSTANTS Rules, MaxOps, AntiEntropy
 
 Nodes == {"a", "b", "c"}
 Names == {"x"}
@@ -83,16 +87,24 @@ MergeCommit ==
             /\ mrg' = [mrg EXCEPT !.phase = "idle"]
             /\ UNCHANGED <<reg, ops>>
 
+AERepair(n, m) ==
+    /\ AntiEntropy /\ m \in K[n] /\ tbl[n] # tbl[m]
+    /\ mrg.phase = "idle" /\ reg[n].phase = "idle" /\ reg[m].phase = "idle"
+    /\ tbl' = [tbl EXCEPT ![n] = tbl[n] \cup tbl[m], ![m] = tbl[n] \cup tbl[m]]
+    /\ UNCHANGED <<K, reg, mrg, ops>>
+
 Next ==
     \/ \E r \in Nodes, x \in Names : RegRead(r, x)
     \/ \E r \in Nodes : RegCommit(r)
     \/ \E i, y \in Nodes : MergeRead(i, y)
     \/ MergeCommit
+    \/ \E n, m \in Nodes : AERepair(n, m)
 
 Spec == Init /\ [][Next]_vars
 
 -----------------------------------------------------------------------------
 Quiet == mrg.phase = "idle" /\ \A n \in Nodes : reg[n].phase = "idle"
+         /\ (AntiEntropy => ~\E p, q \in Nodes : q \in K[p] /\ tbl[p] # tbl[q])
 
 \* At rest, members in step with each other hold the same table.
 InSyncAgree == Quiet => \A n \in Nodes : \A m \in K[n] : tbl[n] = tbl[m]
