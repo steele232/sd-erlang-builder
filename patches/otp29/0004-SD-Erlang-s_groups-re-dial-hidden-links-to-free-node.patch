@@ -1,7 +1,7 @@
-From 572548b5b71d25f9be78123051e8be8ec6859c43 Mon Sep 17 00:00:00 2001
+From 757a3073af2f8d9097a962768e30f1d08380e9db Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 09:15:11 -0700
-Subject: [PATCH 4/7] SD Erlang s_groups: re-dial hidden links to free nodes
+Subject: [PATCH 4/9] SD Erlang s_groups: re-dial hidden links to free nodes
  when becoming free (D-1 for the free namespace)
 
 ---

@@ -1,0 +1,99 @@
+From a32f75f0c36617fa2febe219f88344b206bc6185 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 12:05:53 -0700
+Subject: [PATCH 8/9] SD Erlang s_groups: off-by-default event trace
+ (-s_group_trace)
+
+---
+ lib/kernel/src/s_group.erl | 33 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index bfd1818..0f700db 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -48,7 +48,7 @@
+ %% internal (called on other members)
+ -export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
+          i_names/1, i_is_free/0, i_sync_set/1, i_connect_all/1, i_seqs/0,
+-         i_merged/4, i_alive/1]).
++         i_merged/4, i_alive/1, i_log/0]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+          code_change/3]).
+ 
+@@ -62,6 +62,12 @@
+ %% reconnects within milliseconds and drops nothing.
+ -define(NODE_GC_STEP_MS, 500).
+ -define(NODE_GC_MS, 4000).
++%% Off-by-default event trace (boot flag -s_group_trace): name inserts and
++%% deletions with their reason, partition changes and merges, in a bounded
++%% table read by i_log/0. A debugging and trace-validation aid.
++-define(LOG, s_group_log).
++-define(LOG_MAX, 20000).
++-define(TRACE(Ev), trace_event(Ev)).
+ 
+ %% groups :: #{G => [node()]}; names :: #{G => #{Name => pid()}};
+ %% mons :: #{reference() => {G, Name}}; conns :: #{node() => ConnectionId}
+@@ -308,6 +314,20 @@ i_lookup(G, Name) -> maps:get(Name, maps:get(G, all_names(), #{}), undefined).
+ i_names(G) -> maps:get(G, all_names(), #{}).
+ i_is_free() -> view_groups() =:= #{} andalso not hidden().
+ i_alive(Pids) -> [P || P <- Pids, is_process_alive(P)].
++i_log() ->
++    try ets:tab2list(?LOG) catch error:badarg -> [] end.
++
++trace_event(Ev) ->
++    case persistent_term:get({s_group, trace}, false) of
++        true ->
++            ets:insert(?LOG, {erlang:unique_integer([monotonic, positive]),
++                              erlang:system_time(millisecond), Ev}),
++            case ets:info(?LOG, size) > ?LOG_MAX of
++                true -> ets:delete(?LOG, ets:first(?LOG));
++                false -> ok
++            end;
++        false -> ok
++    end.
+ i_sync_set(G) -> [node() | in_sync(G)].
+ i_seqs() -> gen_server:call(?MODULE, seqs, ?T).
+ i_merged(G, Union, Names, Stamps) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps}, ?T).
+@@ -338,6 +358,13 @@ init([]) ->
+                     {stop, Error};                                        % D-3 / DN1
+                 {ok, Groups} ->
+                     _ = ets:new(?VIEW, [named_table, protected, set, {read_concurrency, true}]),
++                    case init:get_argument(s_group_trace) of
++                        {ok, _} ->
++                            _ = ets:new(?LOG, [named_table, public, ordered_set]),
++                            persistent_term:put({s_group, trace}, true);
++                        error ->
++                            ok
++                    end,
+                     ets:insert(?VIEW, {groups, Groups}),
+                     persistent_term:put({s_group, member}, Groups =/= #{}),
+                     persistent_term:put({s_group, provider}, true),
+@@ -753,6 +780,7 @@ remonitor(N, S) ->
+ 
+ set_sync(G, Nodes, S) ->
+     L = lists:usort(Nodes),
++    ?TRACE({sync, G, L}),
+     ets:insert(?VIEW, {{sync, G}, L}),
+     S#st{sync = maps:put(G, L, S#st.sync)}.
+ 
+@@ -887,6 +915,7 @@ resolve(NI, NY) ->
+ %%--------------------------------------------------------------------
+ 
+ put_name(G, Name, Pid, S) ->
++    ?TRACE({put, G, Name, Pid}),
+     Ns = maps:get(G, S#st.names, #{}),
+     case maps:get(Name, Ns, undefined) of
+         Pid -> S;
+@@ -916,6 +945,8 @@ del_name_if_other(G, Name, Pid, S) ->
+     end.
+ 
+ del_name(G, Name, S) ->
++    ?TRACE({del, G, Name, maps:get(Name, maps:get(G, S#st.names, #{}), undefined),
++            element(2, process_info(self(), current_stacktrace))}),
+     Ns = maps:get(G, S#st.names, #{}),
+     S#st{names = maps:put(G, maps:remove(Name, Ns), S#st.names)}.
+ 
+-- 
+2.50.1 (Apple Git-155)
+

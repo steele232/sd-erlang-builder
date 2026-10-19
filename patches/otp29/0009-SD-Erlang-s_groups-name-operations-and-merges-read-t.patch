@@ -1,0 +1,100 @@
+From 9e1fe38e08420f11bbb6a14f8ba54ef879ed0c88 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 12:08:28 -0700
+Subject: [PATCH 9/9] SD Erlang s_groups: name operations and merges read the
+ partition inside the group lock
+
+---
+ lib/kernel/src/s_group.erl | 43 +++++++++++++++++++++++++++++---------
+ 1 file changed, 33 insertions(+), 10 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index 0f700db..1283059 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -168,9 +168,9 @@ delete_s_group(G) ->
+ 
+ register_name(G, Name, Pid) when is_pid(Pid) ->
+     with_members(G, {no, cannot_register_in_remote_group},
+-                 fun(Members) ->
+-                         locked(G, Members,
+-                                fun() ->
++                 fun(_) ->
++                         locked_partition(G,
++                                fun(Members) ->
+                                         Ns = i_names(G),
+                                         case maps:is_key(Name, Ns) orelse
+                                              lists:member(Pid, maps:values(Ns)) of
+@@ -184,9 +184,9 @@ register_name(G, Name, Pid) when is_pid(Pid) ->
+ 
+ re_register_name(G, Name, Pid) when is_pid(Pid) ->
+     with_members(G, {no, cannot_re_register_in_remote_group},
+-                 fun(Members) ->
+-                         locked(G, Members,
+-                                fun() ->
++                 fun(_) ->
++                         locked_partition(G,
++                                fun(Members) ->
+                                         Ns = i_names(G),
+                                         case lists:member(Pid, maps:values(Ns)) of
+                                             true -> {no, pid_is_already_registered};
+@@ -199,9 +199,9 @@ re_register_name(G, Name, Pid) when is_pid(Pid) ->
+ 
+ unregister_name(G, Name) ->
+     with_members(G, {no, cannot_unregister_from_remote_group},       % R2
+-                 fun(Members) ->
+-                         locked(G, Members,
+-                                fun() -> _ = multicall(Members, i_delete, [G, Name, any]), ok end)
++                 fun(_) ->
++                         locked_partition(G,
++                                fun(Members) -> _ = multicall(Members, i_delete, [G, Name, any]), ok end)
+                  end).
+ 
+ whereis_name(G, Name) ->
+@@ -864,12 +864,16 @@ merge(G, Y) ->
+     P0 = i_sync_set(G),
+     Y0 = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
+     true = is_list(Y0),
+-    locked(G, lists:usort(P0 ++ Y0),
++    U0 = lists:usort(P0 ++ Y0),
++    locked(G, U0,
+            fun() ->
+                    PI = i_sync_set(G),
+                    PY = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
+                    true = is_list(PY),
+                    U = lists:usort(PI ++ PY),
++                   %% Only install where the lock is held; a grown union is
++                   %% merged by a later tick.
++                   [] = U -- U0,
+                    [] = lists:append([rpc:call(N, ?MODULE, i_connect_all, [U], ?T) || N <- U]),
+                    NI = i_names(G),
+                    NY = rpc:call(Y, ?MODULE, i_names, [G], ?T),
+@@ -967,6 +971,25 @@ in_sync(G) ->
+     catch error:badarg -> []
+     end.
+ 
++%% Run Fun(Partition) under the group lock on this node's partition of G.
++%% The partition is read again inside the lock: if it has grown meanwhile (a
++%% merge brought nodes in while this caller waited), the lock does not cover
++%% it, so take it again on the larger set. Writing to a partition read before
++%% the lock lost a registration on a merged-in member (O5 probe).
++locked_partition(G, Fun) ->
++    P0 = [node() | in_sync(G)],
++    case locked(G, P0, fun() ->
++                               P1 = [node() | in_sync(G)],
++                               case P1 -- P0 of
++                                   [] -> {done, Fun(P1)};
++                                   _ -> retry
++                               end
++                       end) of
++        {done, R} -> R;
++        retry -> locked_partition(G, Fun);
++        Other -> Other
++    end.
++
+ %% Group-wide lock on all members (global:trans with an explicit node list).
+ locked(G, Members, Fun) ->
+     case global:trans({{?MODULE, G}, self()}, Fun, Members, infinity) of
+-- 
+2.50.1 (Apple Git-155)
+

@@ -61,8 +61,20 @@ trial(_I, CapMs) ->
     T0 = erlang:monotonic_time(millisecond),
     case wait(Members, P, T0, T0 + CapMs) of
         {Outcome, X} ->
-            Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
+            Missing = [M || M <- Members, rpc:call(M, s_group, whereis_name, [g3, b]) =/= P],
             RegKnown = sd_pbt_obs:known_on(N("n4"), g3),
+            Outcome =:= never andalso
+                io:format("NEVER detail (member, in-sync set, lookup, connected): ~p~n",
+                          [[{hd(string:tokens(atom_to_list(M), "@")),
+                             short(sd_pbt_obs:known_on(M, g3)),
+                             rpc:call(M, s_group, whereis_name, [g3, b]) =:= P,
+                             short([C || C <- rpc:call(M, erlang, nodes, [connected]), lists:member(C, Members)])}
+                            || M <- Members]]),
+            Outcome =:= never andalso
+                [io:format("TRACE ~s: ~p~n", [hd(string:tokens(atom_to_list(M), "@")),
+                                              [{T, Ev} || {_, T, Ev} <- rpc:call(M, s_group, i_log, []),
+                                                          lists:member(b, tuple_to_list(Ev)) orelse element(1, Ev) =:= sync]])
+                 || M <- Members, rpc:call(M, s_group, whereis_name, [g3, b]) =/= P],
             Unknown = (Members -- [N("n4")]) -- RegKnown,
             {Outcome, X, {short(Lagging), short(Missing)}, short(Unknown)}
     end.
@@ -76,7 +88,7 @@ global_view(M) ->
 short(Ns) -> [hd(string:tokens(atom_to_list(Nd), "@")) || Nd <- Ns].
 
 wait(Members, P, T0, Deadline) ->
-    Holders = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =:= P],
+    Holders = [M || M <- Members, rpc:call(M, s_group, whereis_name, [g3, b]) =:= P],
     Now = erlang:monotonic_time(millisecond),
     case {length(Holders) =:= length(Members), Now > Deadline} of
         {true, _} -> {converged, Now - T0};
@@ -111,7 +123,7 @@ trace_failure(Tries) ->
             trace_failure(Tries - 1);
         {never, _} ->
             Traces = [{M, rpc:call(M, gen_server, call, [global_name_server, high_level_trace_get, infinity])} || M <- Members],
-            Missing = [M || M <- Members, rpc:call(M, global, whereis_name, [g3, b]) =/= P],
+            Missing = [M || M <- Members, rpc:call(M, s_group, whereis_name, [g3, b]) =/= P],
             %% term_to_binary: traces contain pids, which file:consult/1 cannot read back.
             File = "/pbt/out/o5-trace.bin",
             ok = file:write_file(File, term_to_binary(
