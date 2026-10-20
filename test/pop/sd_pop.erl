@@ -102,7 +102,7 @@ await(What, F) ->
     Deadline = erlang:monotonic_time(millisecond) + ?WAIT_MS,
     await(What, F, Deadline).
 await(What, F, Deadline) ->
-    case catch F() of
+    case (try F() catch _:_ -> error end) of
         true -> ok;
         _ ->
             case erlang:monotonic_time(millisecond) > Deadline of

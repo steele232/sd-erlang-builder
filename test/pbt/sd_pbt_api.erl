@@ -3,6 +3,7 @@
 %%   sd_pbt_api:run()
 -module(sd_pbt_api).
 -behaviour(gen_server).
+-compile({nowarn_deprecated_function, [{erlang, exit, 2}]}).   % OTP 30; exit_signal/2 is absent on 29
 
 -export([run/0]).
 -export([init/1, handle_call/3, handle_cast/2]).
