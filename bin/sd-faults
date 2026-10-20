@@ -5,6 +5,7 @@
 #   bin/sd-faults [RUNTIME_IMAGE] [SCENARIO...]
 #     scenarios: flap twocuts restart_merge coldstart   (default: all)
 #   SD_FAULTS_SOAK_MIN=N   repeat the scenario set for N minutes (soak)
+# Each step is bounded (5 min): a stuck operation reports step_timeout.
 # Steps: test/pop/sd_faults.erl. Exit 0 iff every scenario converged.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,7 +38,7 @@ cut() { podman exec "flt-$1" iptables -A INPUT -s "$(ip_of "$2")" -j DROP; podma
 heal() { for n in "$@"; do podman exec "flt-$n" iptables -F; done; }
 step() {  # Erlang expression on a hidden driver in flt-r
   podman exec flt-r erl -noshell -hidden -name "drv$RANDOM@r.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
-    -eval "R = (catch $1), io:format(\"step: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
+    -eval "S = self(), spawn(fun() -> S ! {r, (catch $1)} end), R = receive {r, X} -> X after 300000 -> step_timeout end, io:format(\"step: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
 }
 
 flap() {

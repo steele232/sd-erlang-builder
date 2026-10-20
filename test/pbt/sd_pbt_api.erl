@@ -21,7 +21,7 @@ run() ->
       {g, rpc:call(N1, s_group, new_s_group, [g, [N1, N2, N3]])},
       %% monitor_nodes/1: nodedown of a fellow member reaches the subscriber
       {monitor_nodes, monitor_probe(N1, N3)},
-      {monitor_not_boolean, rpc:call(N1, s_group, monitor_nodes, [maybe])},
+      {monitor_not_boolean, rpc:call(N1, s_group, monitor_nodes, ['maybe'])},
       %% attributes on other nodes
       {add_attributes_2, rpc:call(N1, s_group, add_attributes, [[N2], [gpu]])},
       {choose_nodes, lists:member(N2, rpc:call(N1, s_group, choose_nodes, [[{attribute, gpu}]]))},

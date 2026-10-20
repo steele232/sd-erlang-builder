@@ -1,0 +1,59 @@
+From 1ca65d4412239613ee0b5322c25516ef0d73ef32 Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 17:43:14 -0700
+Subject: [PATCH 15/15] SD Erlang s_groups: merges connect before taking the
+ group lock (lock starvation across a cut link)
+
+---
+ lib/kernel/src/s_group.erl | 14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/lib/kernel/src/s_group.erl b/lib/kernel/src/s_group.erl
+index c9a9eb0..091d382 100644
+--- a/lib/kernel/src/s_group.erl
++++ b/lib/kernel/src/s_group.erl
+@@ -58,7 +58,7 @@
+ %% internal (called on other members)
+ -export([i_install/3, i_mesh/1, i_drop/1, i_insert/4, i_delete/3, i_lookup/2,
+          i_names/1, i_is_free/0, i_sync_set/1, i_connect_all/1, i_seqs/0,
+-         i_merged/5, i_alive/1, i_log/0, i_ms/1, i_hash/1]).
++         i_merged/5, i_alive/1, i_log/0, i_ms/1, i_hash/1, i_missing_links/1]).
+ -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
+          code_change/3]).
+ 
+@@ -405,6 +405,11 @@ trace_event(Ev) ->
+ i_sync_set(G) -> [node() | in_sync(G)].
+ i_seqs() -> gen_server:call(?MODULE, seqs, ?T).
+ i_merged(G, Union, Names, Stamps, MS) -> gen_server:call(?MODULE, {merged, G, Union, Names, Stamps, MS}, ?T).
++%% Under the lock: which nodes of U this node is not connected to (no
++%% connection attempt).
++i_missing_links(Nodes) ->
++    [N || N <- Nodes -- [node()], not lists:member(N, nodes(connected))].
++
+ %% Connect to every node of a prospective merged partition; returns the
+ %% nodes still not connected.
+ i_connect_all(Nodes) ->
+@@ -1130,6 +1135,11 @@ merge(G, Y) ->
+     Y0 = rpc:call(Y, ?MODULE, i_sync_set, [G], ?T),
+     true = is_list(Y0),
+     U0 = lists:usort(P0 ++ Y0),
++    %% Connect (and wait for slow or impossible links) BEFORE taking the lock:
++    %% a merge across a cut link must not hold the group lock for a
++    %% connection timeout, or it starves name operations in both partitions
++    %% (found by bin/sd-pop, order x-first: a registration never got the lock).
++    [] = lists:append([rpc:call(N, ?MODULE, i_connect_all, [U0], ?T) || N <- U0]),
+     locked(G, U0,
+            fun() -> traced_op(G, merge, fun() -> merge_locked(G, Y, U0) end) end).
+ 
+@@ -1141,7 +1151,7 @@ merge_locked(G, Y, U0) ->
+                    %% Only install where the lock is held; a grown union is
+                    %% merged by a later tick.
+                    [] = U -- U0,
+-                   [] = lists:append([rpc:call(N, ?MODULE, i_connect_all, [U], ?T) || N <- U]),
++                   [] = lists:append([rpc:call(N, ?MODULE, i_missing_links, [U], ?T) || N <- U]),
+                    NI = i_names(G),
+                    NY = rpc:call(Y, ?MODULE, i_names, [G], ?T),
+                    true = is_map(NY),
+-- 
+2.50.1 (Apple Git-155)
+

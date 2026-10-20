@@ -7,6 +7,8 @@
 # unaffected and converge g1 after the heal. SD_POP_ORDER=one_order to run one.
 # SD_POP_TRACE=1: nodes run with -s_group_trace; after each order the g1 trace
 # is replayed by TLC against the spec invariant (trace validation).
+# Each step is bounded (5 min): a stuck operation (the lock starvation fixed
+# by patch 0015, in the x-first order) reports step_timeout and fails the run.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUNTIME="${1:-localhost/sd-erlang:29.1.2-sd-kernel}"
@@ -22,7 +24,7 @@ ip_of() { podman inspect "pop-$1" --format "{{(index .NetworkSettings.Networks \
 step() {  # Fun or Fun(Args) of sd_pop -> prints, returns 0 iff the step returned ok
   local e="sd_pop:$1"; case "$1" in *"("*) ;; *) e="$e()" ;; esac
   podman exec pop-r erl -noshell -hidden -name "drv$RANDOM@r.pop.lab" -kernel net_ticktime $TICK -pa /pop/ebin \
-    -eval "R = (catch $e), io:format(\"step $1: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
+    -eval "S = self(), spawn(fun() -> S ! {r, (catch $e)} end), R = receive {r, X} -> X after 300000 -> step_timeout end, io:format(\"step $1: ~p~n\", [R]), halt(case R of ok -> 0; _ -> 1 end)."
 }
 cut()  { podman exec pop-a iptables -A INPUT -s "$(ip_of x)" -j DROP; podman exec pop-a iptables -A OUTPUT -d "$(ip_of x)" -j DROP
          podman exec pop-x iptables -A INPUT -s "$(ip_of a)" -j DROP; podman exec pop-x iptables -A OUTPUT -d "$(ip_of a)" -j DROP; }
@@ -53,13 +55,13 @@ run_once() {  # order
     step "trace_tla($1)" > "$T.raw" 2>&1 || true
     sed -n '/^TLA-BEGIN$/,/^TLA-END$/p' "$T.raw" | sed '1d;$d' > "$T"
     printf 'SPECIFICATION Spec\nINVARIANT InSyncAgree\n' > "${T%.tla}.cfg"
-    out=$(cd "$ROOT/test-results/pop" && java -XX:+UseParallelGC -cp "$ROOT/archive/tla/tla2tools-1.7.4.jar" tlc2.TLC \
-            -workers 1 -deadlock -metadir "/tmp/tlc-trace-$$" -config "Trace_$1.cfg" "Trace_$1.tla" 2>&1)
+    out=$(cd "$ROOT/test-results/pop" && mkdir -p "$ROOT/test-results/pop/.tmp" && java -XX:+UseParallelGC -Djava.io.tmpdir="$ROOT/test-results/pop/.tmp" -cp "$ROOT/archive/tla/tla2tools-1.7.4.jar" tlc2.TLC \
+            -workers 1 -deadlock -metadir "$ROOT/test-results/pop/.tlc-$1-$$" -config "Trace_$1.cfg" "Trace_$1.tla" 2>&1)
     n=$(grep -c '^  \[k |->' "$T"); st=$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 | tr -d ',' | cut -d' ' -f1)
     if grep -q "No error has been found" <<<"$out" && [ "$st" = "$((n + 1))" ]; then
       echo "trace validation $1: pass ($n events replayed, InSyncAgree held throughout)"
     else
-      echo "trace validation $1: FAIL ($n events, $st states)"; grep -m3 "is violated\|rror" <<<"$out"; r=1
+      echo "trace validation $1: FAIL ($n events, $st states)"; grep -m3 "is violated\|rror" <<<"$out" || tail -5 <<<"$out"; r=1
     fi
   fi
   return $r
