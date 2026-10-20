@@ -57,7 +57,7 @@ run_once() {  # order
     printf 'SPECIFICATION Spec\nINVARIANT InSyncAgree\n' > "${T%.tla}.cfg"
     out=$(cd "$ROOT/test-results/pop" && mkdir -p "$ROOT/test-results/pop/.tmp" && java -XX:+UseParallelGC -Djava.io.tmpdir="$ROOT/test-results/pop/.tmp" -cp "$ROOT/archive/tla/tla2tools-1.7.4.jar" tlc2.TLC \
             -workers 1 -deadlock -metadir "$ROOT/test-results/pop/.tlc-$1-$$" -config "Trace_$1.cfg" "Trace_$1.tla" 2>&1)
-    n=$(grep -c '^  \[k |->' "$T"); st=$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 | tr -d ',' | cut -d' ' -f1)
+    n=$(grep -c '^  \[k |->' "$T"); st=$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 | tr -d ',' | awk '{print $1}')   # not cut: a function of that name cuts links here
     if grep -q "No error has been found" <<<"$out" && [ "$st" = "$((n + 1))" ]; then
       echo "trace validation $1: pass ($n events replayed, InSyncAgree held throughout)"
     else
