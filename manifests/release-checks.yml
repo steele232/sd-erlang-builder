@@ -2,3 +2,4 @@
 # Note: GitHub source archives are not guaranteed byte-stable over time; the
 # commit sha is the identity, the tarball hash records what was built.
 2026-10-19T23:01:13Z master 9580f21fb60b40c942478cf3dc443791a25717c7 apply=clean build=failed
+2026-10-20T02:44:22Z 9580f21fb60b40c942478cf3dc443791a25717c7 9580f21fb60b40c942478cf3dc443791a25717c7 otp=30 tarball_sha256=68bea95fc97ecb4a3ccd95f7177bde76d46f077b52c441f0ecf88371bdddc4df apply=clean build=ok l5_self="free-node equivalence unknown vs unknown: 20/20 sequences identical" gate=pass (/Users/jonathansteele/projects/2026_10_16_Scalable_Distributed_Erlang/test-results/release-check-9580f21fb60b/gate.summary)
