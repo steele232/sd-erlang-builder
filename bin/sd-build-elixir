@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Build the Elixir image on an SD runtime and run the two-node smoke test
+# (test/elixir/smoke.exs):
+#   bin/sd-build-elixir [RUNTIME_IMAGE]   default localhost/sd-erlang:29.1.2-sd-kernel
+# Result: localhost/sd-elixir:1.20.4-otp29.1.2-sd. Exit 0 iff the smoke test passes.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="${1:-localhost/sd-erlang:29.1.2-sd-kernel}"
+VSN=1.20.4; SHA=2f87be1702583ecbeee82c0ad4d6353de96463cfa0fa6e7557e05f68d90da869
+TAG=localhost/sd-elixir:$VSN-otp29.1.2-sd
+TB="$ROOT/build/dl/elixir/elixir-$VSN.tar.gz"
+if [ ! -f "$TB" ]; then mkdir -p "$(dirname "$TB")"; curl -sfL -o "$TB" "https://github.com/elixir-lang/elixir/archive/refs/tags/v$VSN.tar.gz"; fi
+echo "$SHA  $TB" | shasum -a 256 -c - >/dev/null || { echo "checksum mismatch: $TB" >&2; exit 2; }
+podman build --quiet --build-arg RUNTIME_IMAGE="$(podman image inspect "$RUNTIME" --format '{{.Id}}')" \
+  --build-arg ELIXIR_VSN=$VSN --build-arg ELIXIR_SHA256=$SHA \
+  -f "$ROOT/containers/port/Containerfile.elixir" -t "$TAG" "$ROOT" >/dev/null
+echo "$TAG $(podman image inspect "$TAG" --format '{{.Id}}')"
+podman run --rm "$TAG" elixir -e 'IO.puts("Elixir #{System.version()} on OTP #{:erlang.system_info(:otp_release)}, s_group: #{inspect(Process.whereis(:s_group) != nil)}")'
+# Two nodes in one container (short names on the container's hostname).
+podman run --rm --hostname sdex "$TAG" sh -c '
+  elixir --sname b --cookie sd-smoke -e "Process.sleep(:infinity)" & sleep 3
+  elixir --sname a --cookie sd-smoke /sd-elixir/smoke.exs b@sdex'

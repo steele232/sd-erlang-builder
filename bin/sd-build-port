@@ -8,6 +8,7 @@ ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
 DIGEST=$(grep -m1 "$ARCH" "$ROOT/manifests/images.lock" | grep -o 'sha256:[0-9a-f]*' | head -1)
 "$ROOT/bin/sd-port-tree" >/dev/null
 T="$ROOT/build/otp29-kernel"
+"$ROOT/bin/sd-port-lint" "$T" >/dev/null || { "$ROOT/bin/sd-port-lint" "$T"; exit 1; }
 OUT="$ROOT/build/port-src"; rm -rf "$OUT"; mkdir -p "$OUT/src"
 CHANGED=$(git -C "$T" diff --name-only base HEAD -- lib/kernel/src | grep '\.erl$' | xargs -n1 basename | sed 's/\.erl$//')
 for m in $CHANGED; do cp "$T/lib/kernel/src/$m.erl" "$OUT/src/"; done

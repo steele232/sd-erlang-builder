@@ -1,7 +1,7 @@
-From 5bdd08a8364d090ec8244dd18fccb3c5347d4755 Mon Sep 17 00:00:00 2001
+From 85bbbb9f72d70455ff7a75a0c17ae2274ba6af11 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 16:01:49 -0700
-Subject: [PATCH 10/15] SD Erlang s_groups: compile on OTP 30 (exit/2
+Subject: [PATCH 10/16] SD Erlang s_groups: compile on OTP 30 (exit/2
  deprecation)
 
 ---

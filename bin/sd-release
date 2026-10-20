@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# Release artifact for the SD Erlang kernel port:
+#   bin/sd-release VERSION [--images]
+# Writes dist/sd-erlang-29.1.2-sd-VERSION/:
+#   otp_src_29.1.2-sd-VERSION.tar.gz   official OTP 29.1.2 source with patches/otp29 applied
+#                                      (./configure && make && make install, as stock)
+#   patches-otp29-VERSION.tar.gz       the patch series (apply with patch -p1 or git am)
+#   kernel-overlay-29.1.2-sd-VERSION.tar.gz
+#                                      patched kernel beams + kernel.app compiled in the
+#                                      official erlang:29.1.2 image; for an existing
+#                                      OTP 29.1.2 install only (see INSTALL in the archive)
+#   docs/                              USAGE, MIGRATION, KERNEL_PORT
+#   MANIFEST.txt, SHA256SUMS
+#   --images: also sd-erlang and sd-elixir images as gzipped OCI archives (about 600 MB each)
+# Inputs are checked first: patch lint, official tarball SHA-256, image present.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VER="${1:?usage: sd-release VERSION [--images]}"; IMAGES="${2:-}"
+VSN=29.1.2; SHA=c79966661e35fe4aff8ec003db63682e3b33b10b672220d51bf93c0a9244b049
+IMG=localhost/sd-erlang:$VSN-sd-kernel; EIMG=localhost/sd-elixir:1.20.4-otp$VSN-sd
+NAME=sd-erlang-$VSN-sd-$VER; OUT="$ROOT/dist/$NAME"
+[ -e "$OUT" ] && { echo "$OUT exists; choose another VERSION" >&2; exit 2; }
+
+"$ROOT/bin/sd-port-tree" >/dev/null; "$ROOT/bin/sd-port-lint" "$ROOT/build/otp29-kernel"
+TB="$ROOT/build/dl/otp/otp_src_$VSN.tar.gz"
+[ -f "$TB" ] || { mkdir -p "$(dirname "$TB")"; curl -sfL -o "$TB" "https://github.com/erlang/otp/releases/download/OTP-$VSN/otp_src_$VSN.tar.gz"; }
+echo "$SHA  $TB" | shasum -a 256 -c - >/dev/null
+podman image exists "$IMG" || { echo "missing $IMG (bin/sd-build-port)" >&2; exit 2; }
+mkdir -p "$OUT/docs"
+
+# 1. patched source
+W="$ROOT/build/release-$VER"; rm -rf "$W"; mkdir -p "$W"
+tar -xzf "$TB" -C "$W"
+for p in "$ROOT"/patches/otp29/*.patch; do (cd "$W/otp_src_$VSN" && patch -p1 -s --forward < "$p"); done
+mv "$W/otp_src_$VSN" "$W/otp_src_$VSN-sd-$VER"
+(cd "$W/otp_src_$VSN-sd-$VER" && ls "$ROOT"/patches/otp29/*.patch | xargs -n1 basename > SD_PATCHES)
+tar -czf "$OUT/otp_src_$VSN-sd-$VER.tar.gz" -C "$W" "otp_src_$VSN-sd-$VER"
+
+# 2. patches
+tar -czf "$OUT/patches-otp29-$VER.tar.gz" -C "$ROOT/patches" otp29
+
+# 3. kernel overlay from the image
+CID="$(podman create "$IMG")"
+K="$(podman run --rm "$IMG" sh -c 'ls -d /usr/local/lib/erlang/lib/kernel-*')"
+mkdir -p "$W/overlay/ebin" "$W/overlay/src"
+for m in $(cat "$ROOT/build/port-src/CHANGED" 2>/dev/null || echo "global global_group kernel s_group"); do
+  podman cp "$CID:$K/ebin/$m.beam" "$W/overlay/ebin/"; podman cp "$CID:$K/src/$m.erl" "$W/overlay/src/"
+done
+podman cp "$CID:$K/ebin/kernel.app" "$W/overlay/ebin/"; podman rm "$CID" >/dev/null
+cat > "$W/overlay/INSTALL" <<EOT
+Kernel overlay for an existing Erlang/OTP $VSN installation ($(basename "$K")).
+Built in the official erlang:$VSN image (OTP's own compiler and options).
+Copy ebin/* over <OTP root>/lib/$(basename "$K")/ebin/ (and src/* over src/),
+after backing up the files it replaces. For any other OTP version, build
+from otp_src_$VSN-sd-$VER.tar.gz or apply the patches instead.
+Check: erl -noshell -eval 'io:format("~p~n", [whereis(s_group)]), halt().'
+EOT
+tar -czf "$OUT/kernel-overlay-$VSN-sd-$VER.tar.gz" -C "$W" overlay
+
+# 4. docs
+cp "$ROOT/docs/USAGE.md" "$ROOT/docs/MIGRATION.md" "$ROOT/port/KERNEL_PORT.md" "$OUT/docs/"
+
+# 5. images (optional)
+if [ "$IMAGES" = --images ]; then
+  for i in "$IMG" "$EIMG"; do
+    podman image exists "$i" || { echo "missing $i" >&2; exit 2; }
+    f="$(echo "${i#localhost/}" | tr ':/' '--').oci.tar.gz"
+    podman save --format oci-archive "$i" -o "$W/img.tar" && gzip -c "$W/img.tar" > "$OUT/$f"; rm -f "$W/img.tar"
+  done
+fi
+
+# 6. manifest and checksums
+{
+  echo "release:        $NAME"
+  echo "repo commit:    $(git -C "$ROOT" rev-parse HEAD)$(git -C "$ROOT" diff --quiet HEAD -- patches || echo ' (patches modified)')"
+  echo "upstream:       otp_src_$VSN.tar.gz sha256 $SHA (= upstream SHA256.txt)"
+  echo "patches:"; (cd "$ROOT" && ls patches/otp29/*.patch | xargs shasum -a 256 | sed 's/^/  /')
+  echo "image:          $IMG $(podman image inspect "$IMG" --format '{{.Id}}')"
+  podman image exists "$EIMG" && echo "elixir image:   $EIMG $(podman image inspect "$EIMG" --format '{{.Id}}')"
+  echo "built:          $(date -u +%FT%TZ) on $(uname -sm)"
+} > "$OUT/MANIFEST.txt"
+(cd "$OUT" && find . -type f ! -name SHA256SUMS | sed 's|^\./||' | sort | xargs shasum -a 256 > SHA256SUMS)
+rm -rf "$W"
+echo "== $OUT"; (cd "$OUT" && ls -la | awk 'NR>1 {print "   " $5 "\t" $9}')

@@ -1,0 +1,30 @@
+From 7fde3cd2220d944e875d4e64edb9e81b6277111a Mon Sep 17 00:00:00 2001
+From: Jonathan Steele <jonathan@renew-it.us>
+Date: Mon, 19 Oct 2026 17:54:55 -0700
+Subject: [PATCH 16/16] SD Erlang s_groups: build s_group with the kernel
+ (Makefile MODULES)
+
+The kernel Makefile compiles only the modules it lists; s_group was in
+kernel.app.src but not in MODULES, so a source build (./configure && make)
+installed a kernel whose supervisor could not start s_group (undef). The
+container images compiled the changed modules separately and missed it;
+found by bin/sd-host-build.
+---
+ lib/kernel/src/Makefile | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/lib/kernel/src/Makefile b/lib/kernel/src/Makefile
+index bc94e3d..a4d6e17 100644
+--- a/lib/kernel/src/Makefile
++++ b/lib/kernel/src/Makefile
+@@ -143,6 +143,7 @@ MODULES = \
+ 	pg2 \
+ 	ram_file \
+ 	rpc \
++	s_group \
+ 	seq_trace \
+ 	socket \
+ 	standard_error \
+-- 
+2.50.1 (Apple Git-155)
+

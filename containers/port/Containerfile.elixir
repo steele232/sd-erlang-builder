@@ -1,0 +1,18 @@
+# Elixir on the SD Erlang runtime: Elixir v1.20.4 (supports OTP 27-29) built
+# from its source tag on top of an SD kernel image. Built by bin/sd-build-elixir.
+ARG RUNTIME_IMAGE=localhost/sd-erlang:29.1.2-sd-kernel
+FROM ${RUNTIME_IMAGE}
+ARG ELIXIR_VSN=1.20.4
+ARG ELIXIR_SHA256=2f87be1702583ecbeee82c0ad4d6353de96463cfa0fa6e7557e05f68d90da869
+COPY build/dl/elixir/elixir-${ELIXIR_VSN}.tar.gz /tmp/elixir.tar.gz
+RUN echo "${ELIXIR_SHA256}  /tmp/elixir.tar.gz" | sha256sum -c - \
+ && mkdir -p /usr/local/src/elixir \
+ && tar -xzf /tmp/elixir.tar.gz --strip-components=1 -C /usr/local/src/elixir \
+ && rm /tmp/elixir.tar.gz \
+ && make -C /usr/local/src/elixir compile install PREFIX=/usr/local \
+ && rm -rf /usr/local/src/elixir
+ENV LANG=C.UTF-8
+COPY test/elixir /sd-elixir
+LABEL org.opencontainers.image.title="sd-elixir" \
+      org.opencontainers.image.description="Elixir ${ELIXIR_VSN} on OTP 29.1.2 with the SD Erlang kernel (s_group)"
+CMD ["iex"]

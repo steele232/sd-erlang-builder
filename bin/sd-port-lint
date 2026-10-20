@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Build-system consistency of a patched kernel tree (git repo with tag `base`):
+# every module the series adds to lib/kernel/src must be in the kernel
+# Makefile's MODULES (or a source build silently omits it; patch 0016) and in
+# kernel.app.src's modules list.
+#   bin/sd-port-lint TREE        exit 0 iff consistent
+set -euo pipefail
+T="${1:?usage: sd-port-lint TREE}"
+rc=0
+for f in $(git -C "$T" diff --name-only --diff-filter=A base HEAD -- lib/kernel/src | grep '\.erl$' || true); do
+  m=$(basename "$f" .erl)
+  grep -Eq "^[[:space:]]+$m \\\\$" "$T/lib/kernel/src/Makefile" || { echo "lint: $m not in lib/kernel/src/Makefile MODULES"; rc=1; }
+  grep -Eq "^[[:space:]]+$m,?$" "$T/lib/kernel/src/kernel.app.src" || { echo "lint: $m not in kernel.app.src modules"; rc=1; }
+done
+[ $rc = 0 ] && echo "lint: kernel build lists consistent"
+exit $rc

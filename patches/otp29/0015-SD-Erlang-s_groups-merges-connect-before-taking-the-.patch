@@ -1,7 +1,7 @@
-From 1ca65d4412239613ee0b5322c25516ef0d73ef32 Mon Sep 17 00:00:00 2001
+From 4a497e30a9581571e2c381bb162045479f6c5e93 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 17:43:14 -0700
-Subject: [PATCH 15/15] SD Erlang s_groups: merges connect before taking the
+Subject: [PATCH 15/16] SD Erlang s_groups: merges connect before taking the
  group lock (lock starvation across a cut link)
 
 ---

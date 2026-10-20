@@ -60,6 +60,7 @@ for p in "$ROOT"/patches/otp29/*.patch; do
   fi
 done
 echo "   all $(ls "$ROOT"/patches/otp29/*.patch | wc -l | tr -d ' ') patches apply"
+"$ROOT/bin/sd-port-lint" "$T" | sed "s/^/   /" || { echo "$(date -u +%FT%TZ) $REF $SHA apply=clean lint=failed" >> "$ROOT/manifests/release-checks.yml"; exit 1; }
 
 # 4. SD kernel image
 PS="build/port-src-$S12"; rm -rf "$ROOT/$PS"; mkdir -p "$ROOT/$PS/src"

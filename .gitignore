@@ -14,3 +14,5 @@ erl_crash.dump
 convo_transcripts/
 # Patch-authoring work tree for the OTP 29 kernel port (recreate with bin/sd-port-tree)
 /build/
+# Release artifacts (bin/sd-release); published separately, checksums in their MANIFEST
+/dist/

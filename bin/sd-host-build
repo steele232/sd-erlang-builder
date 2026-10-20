@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Build and install SD Erlang (OTP 29.1.2 + patches/otp29) from source on this
+# host, no containers:
+#   bin/sd-host-build PREFIX            e.g. bin/sd-host-build $HOME/.local/sd-otp-29.1.2
+#   SD_CONFIGURE_FLAGS="..."            extra ./configure flags (default: --without-javac;
+#                                       on macOS with Homebrew, --with-ssl=<brew openssl>)
+#   SD_OTP_TARBALL=path                 use a local copy of otp_src_29.1.2.tar.gz
+# Needs a C compiler, make, perl, ncurses and OpenSSL headers (the usual OTP
+# build prerequisites). Steps: fetch the official tarball and check its
+# SHA-256, apply the patches with patch -p1, configure, make, make install,
+# then check that the installed runtime boots with s_group.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PREFIX="${1:?usage: sd-host-build PREFIX}"
+case "$PREFIX" in /*) ;; *) PREFIX="$PWD/$PREFIX" ;; esac
+VSN=29.1.2
+SHA=c79966661e35fe4aff8ec003db63682e3b33b10b672220d51bf93c0a9244b049   # = upstream SHA256.txt
+URL=https://github.com/erlang/otp/releases/download/OTP-$VSN/otp_src_$VSN.tar.gz
+
+TB="${SD_OTP_TARBALL:-$ROOT/build/dl/otp/otp_src_$VSN.tar.gz}"
+if [ ! -f "$TB" ]; then mkdir -p "$(dirname "$TB")"; curl -sfL -o "$TB" "$URL"; fi
+echo "$SHA  $TB" | shasum -a 256 -c - >/dev/null || { echo "checksum mismatch: $TB" >&2; exit 2; }
+
+W="$ROOT/build/host-$VSN-sd"; rm -rf "$W"; mkdir -p "$W"
+tar -xzf "$TB" -C "$W"
+SRC="$W/otp_src_$VSN"
+for p in "$ROOT"/patches/otp29/*.patch; do
+  (cd "$SRC" && patch -p1 -s --forward < "$p") || { echo "patch failed: $(basename "$p")" >&2; exit 1; }
+done
+echo "== $(ls "$ROOT"/patches/otp29/*.patch | wc -l | tr -d ' ') patches applied to otp_src_$VSN"
+
+FLAGS="${SD_CONFIGURE_FLAGS:---without-javac}"
+if [ -z "${SD_CONFIGURE_FLAGS:-}" ] && [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null; then
+  SSL="$(brew --prefix openssl@3 2>/dev/null || true)"; [ -d "$SSL" ] && FLAGS="$FLAGS --with-ssl=$SSL"
+fi
+JOBS="$( (command -v nproc >/dev/null && nproc) || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+cd "$SRC"; export ERL_TOP="$SRC"
+echo "== configure --prefix=$PREFIX $FLAGS"
+./configure --prefix="$PREFIX" $FLAGS > "$W/configure.log" 2>&1 || { tail -20 "$W/configure.log"; exit 1; }
+echo "== make -j$JOBS (several minutes)"
+make -j"$JOBS" > "$W/make.log" 2>&1 || { tail -30 "$W/make.log"; exit 1; }
+make install > "$W/install.log" 2>&1 || { tail -20 "$W/install.log"; exit 1; }
+(cd "$ROOT" && ls patches/otp29/*.patch | xargs shasum -a 256) > "$PREFIX/lib/erlang/SD_PATCHES"
+
+"$PREFIX/bin/erl" -noshell -eval 'halt(case whereis(s_group) of undefined -> 1; _ -> 0 end).' \
+  || { echo "installed runtime does not start s_group" >&2; exit 1; }
+echo "== installed: $PREFIX/bin/erl (OTP $VSN + SD kernel, s_group running); patch list in $PREFIX/lib/erlang/SD_PATCHES"

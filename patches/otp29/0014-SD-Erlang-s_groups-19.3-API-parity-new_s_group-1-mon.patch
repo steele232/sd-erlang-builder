@@ -1,7 +1,7 @@
-From b8e04d66d72ce798c1f1b6c2a339acd728c26ec7 Mon Sep 17 00:00:00 2001
+From 0451616abad4a3da06002c53366ba60d8b2a0d29 Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 16:23:53 -0700
-Subject: [PATCH 14/15] SD Erlang s_groups: 19.3 API parity (new_s_group/1,
+Subject: [PATCH 14/16] SD Erlang s_groups: 19.3 API parity (new_s_group/1,
  monitor_nodes/1, attributes/2, *_external) and {via, s_group, {G, Name}}
 
 ---

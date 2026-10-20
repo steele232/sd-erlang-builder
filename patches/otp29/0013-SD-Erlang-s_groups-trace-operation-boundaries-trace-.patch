@@ -1,7 +1,7 @@
-From b09e601bf13575f5c47f64f80eab68998dc7b4c3 Mon Sep 17 00:00:00 2001
+From 9f5426dfc1ca175f469efb7875ec1ff30c1b9bbb Mon Sep 17 00:00:00 2001
 From: Jonathan Steele <jonathan@renew-it.us>
 Date: Mon, 19 Oct 2026 16:18:25 -0700
-Subject: [PATCH 13/15] SD Erlang s_groups: trace operation boundaries (trace
+Subject: [PATCH 13/16] SD Erlang s_groups: trace operation boundaries (trace
  validation)
 
 ---
