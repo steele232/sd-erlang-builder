@@ -34,3 +34,5 @@ Changes to this plan are recorded here, with the reason.
   the kernel children). Found by the image build itself, which compiles with
   the patched kernel. Fixed with a self-re-arming `erlang:send_after/3`.
 
+
+Next rounds (hands-on: building on SD Erlang, the Partisan comparison, SD Erlang with Partisan): `NEXT_ROUNDS.md`.
