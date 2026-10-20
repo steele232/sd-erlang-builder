@@ -4,7 +4,8 @@
 #   profile, P18 vs 19.3, L2 vs 19.3 outcome sets (all keys and core keys),
 #   L5 free-node equivalence vs stock 29.1.2, POP1 partition scenario
 #   (bin/sd-pop, both orders), H2 / R-HID-1, -rsconfig (R-PERS-1), rejoin
-#   (D-7/D-8) and API-parity/via probes.
+#   (D-7/D-8) and API-parity/via probes, trace validation of both POP orders,
+#   L1 with node failures (M1), fault injection (bin/sd-faults).
 #   TLA+ models: bin/sd-tla.
 #   bin/sd-gate IMAGE LABEL          (REPLAYS="file.eterm ..." from test/corpus;
 #                                     L5_REF=stock reference trace file, default free-stock29.eterm)
@@ -33,5 +34,7 @@ echo "H2: $(bin/sd-pbt eval 'sd_pbt_h2:run()' $IMG 2>&1 | grep -E 'CONFORMS|DIVE
 echo "rsconfig: $(bin/sd-pbt eval 'sd_pbt_rsconfig:run(3)' $IMG 2>&1 | grep '^rsconfig' | tr '\n' ' ')"
 echo "rejoin: $(bin/sd-pbt eval 'sd_pbt_rejoin:run()' $IMG 2>&1 | grep -E '^rejoin|REJOIN RESULT' | tr '\n' ' ')"
 echo "api: $(bin/sd-pbt eval 'sd_pbt_api:run()' $IMG 2>&1 | grep 'API RESULT')"
-bin/sd-pop "$IMG" > $S/pop.txt 2>&1; echo "POP: $(grep 'POP RESULT' $S/pop.txt)"
+SD_POP_TRACE=1 bin/sd-pop "$IMG" > $S/pop.txt 2>&1; echo "POP: $(grep 'POP RESULT' $S/pop.txt) $(grep -c 'trace validation .*: pass' $S/pop.txt)/2 traces validated"
+SD_PBT_FAILURES=1 bin/sd-pbt 100 $IMG > $S/l1-failures.txt 2>&1; echo "L1 failures (M1): $(grep -m1 -o 'OK: Passed [0-9]* test(s)\|Failed: After [0-9]* test(s)' $S/l1-failures.txt)"
+bin/sd-faults "$IMG" > $S/faults.txt 2>&1; echo "faults: $(grep 'FAULTS RESULT' $S/faults.txt | cut -d' ' -f1-3)"
 echo GATE_DONE

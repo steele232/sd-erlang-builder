@@ -14,14 +14,14 @@ if [ ! -f "$JAR" ]; then
   curl -sSfL -o "$JAR" https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
 fi
 echo "$SHA  $JAR" | shasum -a 256 -c - >/dev/null
-META="$(mktemp -d)"
+META="$ROOT/test-results/tla/.meta-$$"; mkdir -p "$META/tmp"   # under the repo: TLC also extracts its standard modules to java.io.tmpdir
 rc=0
 cd "$ROOT/spec/tla"
 for cfg in *.cfg; do
   spec="${cfg%%_*}.tla"
-  out="$(java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC -workers 2 -deadlock \
+  out="$(java -XX:+UseParallelGC -Djava.io.tmpdir="$META/tmp" -cp "$JAR" tlc2.TLC -workers 2 -deadlock \
            -metadir "$META/${cfg%.cfg}" -config "$cfg" "$spec" 2>&1 || true)"
-  if grep -q "is violated" <<<"$out"; then got=violation; elif grep -q "No error has been found" <<<"$out"; then got=pass; else got=error; fi
+  if grep -q "is violated\|were violated" <<<"$out"; then got=violation; elif grep -q "No error has been found" <<<"$out"; then got=pass; else got=error; fi
   case "$cfg" in *_none.cfg) want=violation ;; *) want=pass ;; esac
   grep -q "EXPECT: violation" "$cfg" && want=violation
   states="$(grep -Eo '[0-9,]+ distinct states found' <<<"$out" | tail -1 || true)"
