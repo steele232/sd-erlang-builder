@@ -13,6 +13,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 IMG=${1:?image}; TAG=${2:?label}; S="$ROOT/test-results/gate-$TAG"; mkdir -p "$S"
+exec > >(tee "$S/summary.txt")
 T=test-results/pbt; G='["/pbt/out/golden-v1-19.3.eterm", "/pbt/out/golden-v1-19.3-k1.eterm", "/pbt/out/golden-v1-19.3-k2.eterm", "/pbt/out/golden-v1-19.3-k3.eterm"]'
 export SD_DEMO_RUNTIME=$IMG SD_DEMO_IMAGE=localhost/sd-demo:$TAG SD_DEMO_ERL_FLAGS="${SD_DEMO_ERL_FLAGS:-}"
 bin/sd-demo down >/dev/null 2>&1; bin/sd-demo up >/dev/null 2>&1
@@ -38,3 +39,21 @@ SD_POP_TRACE=1 bin/sd-pop "$IMG" > $S/pop.txt 2>&1; echo "POP: $(grep 'POP RESUL
 SD_PBT_FAILURES=1 bin/sd-pbt 100 $IMG > $S/l1-failures.txt 2>&1; echo "L1 failures (M1): $(grep -m1 -o 'OK: Passed [0-9]* test(s)\|Failed: After [0-9]* test(s)' $S/l1-failures.txt)"
 bin/sd-faults "$IMG" > $S/faults.txt 2>&1; echo "faults: $(grep 'FAULTS RESULT' $S/faults.txt | cut -d' ' -f1-3)"
 echo GATE_DONE
+# Verdict: every layer must report its pass form (an empty or missing line fails).
+need() { grep -Eq "$1" "$S/summary.txt" || { echo "  missing: $2"; bad=1; }; }
+bad=0; sleep 1
+need '^demo3: .*10/10 passed' demo3; need '^demo15: .*10/10 passed' demo15
+need '^L1: OK: Passed 200 test' L1
+for c in ${REPLAYS:-}; do need "^replay $c: #\{pass => 10\}" "replay $c"; done
+need '^per-case profile: #\{pass => 40\}' profile
+need '^P18 lines differing from 19.3: 0$' P18
+need '^L2 keys=own_s_groups,s_groups,names: first-divergence kinds: #\{inside => 30\}' 'L2 core'
+need '20/20 sequences identical' L5
+need '^H2: CONFORMS' H2
+need '0 ms between the two changes: 3/3 .*2000 ms between the two changes: 3/3' rsconfig
+need 'REJOIN RESULT: pass' rejoin; need 'API RESULT: pass' api
+need '^POP: POP RESULT: pass 2/2 traces validated' 'POP + traces'
+need '^L1 failures \(M1\): OK: Passed 100 test' 'L1 failures'
+need '^faults: FAULTS RESULT: pass' faults
+echo "GATE RESULT: $([ $bad = 0 ] && echo pass || echo FAIL)"
+exit $bad

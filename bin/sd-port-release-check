@@ -91,5 +91,7 @@ echo "   stock L5 self-agreement: $SELF"
 
 # 6. gate
 L5_REF="free-stock-$S12-a.eterm" REPLAYS="${REPLAYS:-l1-sdk-noconnection.eterm l1-c4-joinrace.eterm l1-sdx-freemesh.eterm l1-sdk-freedhidden.eterm l1-sdk-redial.eterm}" \
-  "$ROOT/bin/sd-gate" "$SD" "rel-$S12" | tee "$OUT/gate.summary"
-echo "$(date -u +%FT%TZ) $REF $SHA otp=$REL tarball_sha256=$TARSHA apply=clean build=ok l5_self=\"$SELF\" gate=$OUT/gate.summary" >> "$ROOT/manifests/release-checks.yml"
+  "$ROOT/bin/sd-gate" "$SD" "rel-$S12" | tee "$OUT/gate.summary" || true
+GATE="$(grep -o 'GATE RESULT: [a-zA-Z]*' "$OUT/gate.summary" | cut -d' ' -f3)"
+echo "$(date -u +%FT%TZ) $REF $SHA otp=$REL tarball_sha256=$TARSHA apply=clean build=ok l5_self=\"$SELF\" gate=${GATE:-none} ($OUT/gate.summary)" >> "$ROOT/manifests/release-checks.yml"
+[ "$GATE" = pass ]
