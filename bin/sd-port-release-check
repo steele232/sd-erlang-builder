@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Rebase verification of patches/otp29 against an upstream OTP source snapshot:
-#   bin/sd-port-release-check REF        REF = a branch (master) or tag (OTP-29.2)
+#   bin/sd-port-release-check REF        REF = a branch (master), a tag (OTP-29.2) or a full commit sha
 #   bin/sd-port-release-check REF --no-gate   build and apply only
 #
 # Steps:
@@ -25,7 +25,8 @@ esac
 REBAR3_URL=https://github.com/erlang/rebar3/releases/download/3.27.0/rebar3
 REBAR3_SHA256=af85aab41f9fd74bdd6341ebdf6fe9c88077aab9f8eac82371583fa02f2b0bdf
 
-SHA="$(git -C "$ROOT/archive/release-otp.git" ls-remote upstream "refs/heads/$REF" "refs/tags/$REF" "refs/tags/$REF^{}" | awk '{print $1}' | tail -1)"
+if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then SHA="$REF"   # a pinned commit
+else SHA="$(git -C "$ROOT/archive/release-otp.git" ls-remote upstream "refs/heads/$REF" "refs/tags/$REF" "refs/tags/$REF^{}" | awk '{print $1}' | tail -1)"; fi
 [ -n "$SHA" ] || { echo "cannot resolve $REF" >&2; exit 2; }
 S12="${SHA:0:12}"
 OUT="$ROOT/test-results/release-check-$S12"; mkdir -p "$OUT"
